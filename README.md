@@ -1,18 +1,3 @@
-# NX Pocket
-
-**One iPhone app for all your Switch games.** NX Pocket turns each of your games into a game pack (one `.nxpack` file) that you import into a single app, with a game library, signing on the phone, foldable-phone layouts and local play over Wi-Fi. NX Pocket for Mac makes the packs from your own game files and sends them to your iPhone.
-
-<p align="center"><img src="docs/images/nx-pocket/iphone-home.jpg" width="49%" alt="NX Pocket on a foldable iPhone: the game library"> <img src="docs/images/nx-pocket/mac-app.jpg" width="49%" alt="NX Pocket for Mac: a game and its pack"></p>
-
-- **Guide:** [English](docs/nx-pocket/README.md) · [简体中文](docs/nx-pocket/README.zh-CN.md)
-- **Credits and licenses:** [NOTICE](NOTICE.md)
-
-> NX Pocket is not affiliated with, authorized or endorsed by Nintendo. Nintendo Switch is a trademark of Nintendo. NX Pocket provides no games or keys: use only games and console keys you legally own, and do not share game packs.
-
-NX Pocket is a fork of [nxnative](https://github.com/seedds/nxnative), which does the work underneath: running the game's own code natively, with Switch graphics rebuilt on Metal. nxnative's own README follows.
-
----
-
 # nxnative
 
 Play your own Nintendo Switch games natively on iPhone and iPad. Bring your game (its NSP files) and your `prod.keys`; one script turns them into an IPA that you sideload.
