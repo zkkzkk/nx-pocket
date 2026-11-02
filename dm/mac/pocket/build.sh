@@ -12,4 +12,7 @@ ROOT=$(cd ../../.. && pwd)   # the checkout's path, mapped to "." in the binary 
 xcodebuild -project NXPocketMac.xcodeproj -scheme NXPocketMac -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$OUT/dd" -quiet build \
     "OTHER_SWIFT_FLAGS=\$(inherited) -file-prefix-map $ROOT=." "OTHER_CFLAGS=\$(inherited) -ffile-prefix-map=$ROOT=."
 rm -rf "$OUT/NX Pocket.app"; ditto "$OUT/dd/Build/Products/Release/NX Pocket.app" "$OUT/NX Pocket.app"
+# the debug map's object paths (N_OSO, in the build folder) out too, then the ad hoc signature again over the stripped binary
+strip -S -x "$OUT/NX Pocket.app/Contents/MacOS/NX Pocket" 2>/dev/null
+codesign --force --sign - --preserve-metadata=entitlements,identifier,flags "$OUT/NX Pocket.app"
 echo "app: $OUT/NX Pocket.app"
