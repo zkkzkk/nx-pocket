@@ -6,6 +6,9 @@ NX Pocket is one iPhone app for all your Switch games, built on [nxnative](https
 
 > **Disclaimer.** NX Pocket is not affiliated with, authorized or endorsed by Nintendo. Nintendo Switch is a trademark of Nintendo. NX Pocket provides no games or keys: use only games and console keys you legally own. Do not share game packs: a pack holds the whole game.
 
+<p align="center"><img src="../images/nx-pocket/iphone-home.jpg" width="49%" alt=""> <img src="../images/nx-pocket/mac-app.jpg" width="49%" alt=""></p>
+<p align="center"><sub>NX Pocket on a foldable iPhone (left) and NX Pocket for Mac (right).</sub></p>
+
 ## What it does
 
 - **One app, a library of games.** Import game packs from Files, AirDrop or a drive; the home screen shows each game's cover with a blurred background.

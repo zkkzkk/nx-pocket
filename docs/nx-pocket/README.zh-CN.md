@@ -6,6 +6,9 @@ NX Pocket 是一个在 iPhone 上装所有 Switch 游戏的 App，基于 [nxnati
 
 > **免责声明**：本项目与任天堂无关，未获任天堂授权或认可。Nintendo Switch 是任天堂的商标。NX Pocket 不提供任何游戏或密钥，请仅使用你自己合法拥有的游戏和主机密钥。请勿分享游戏包：一个游戏包里就是完整的游戏。
 
+<p align="center"><img src="../images/nx-pocket/iphone-home.jpg" width="49%" alt=""> <img src="../images/nx-pocket/mac-app.jpg" width="49%" alt=""></p>
+<p align="center"><sub>左：折叠屏 iPhone 上的 NX Pocket；右：NX Pocket for Mac。</sub></p>
+
 ## 功能
 
 - **一个 App，一个游戏库**：从"文件"、隔空投送或外接盘导入游戏包，主页显示每个游戏的封面和模糊背景。

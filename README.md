@@ -2,6 +2,8 @@
 
 **One iPhone app for all your Switch games.** NX Pocket turns each of your games into a game pack (one `.nxpack` file) that you import into a single app, with a game library, signing on the phone, foldable-phone layouts and local play over Wi-Fi. NX Pocket for Mac makes the packs from your own game files and sends them to your iPhone.
 
+<p align="center"><img src="docs/images/nx-pocket/iphone-home.jpg" width="49%" alt="NX Pocket on a foldable iPhone: the game library"> <img src="docs/images/nx-pocket/mac-app.jpg" width="49%" alt="NX Pocket for Mac: a game and its pack"></p>
+
 - **Guide:** [English](docs/nx-pocket/README.md) · [简体中文](docs/nx-pocket/README.zh-CN.md)
 - **Credits and licenses:** [NOTICE](NOTICE.md)
 
