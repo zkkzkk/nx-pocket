@@ -24,12 +24,13 @@ NX Pocket is one iPhone app for all your Switch games, built on [nxnative](https
 
 ## Getting started
 
-1. **NX Pocket for Mac.** Download the DMG from Releases and move the app to Applications. It is not notarized: the first time, open it, then allow it in System Settings → Privacy & Security → Open Anyway. Or build it yourself: `dm/mac/pocket/build.sh <output folder>`.
-2. **Setup.** The first start checks Xcode and installs what a build needs (Homebrew tools, Python modules). Point it at your `prod.keys`; only the path is kept, the keys are never copied.
-3. **Add a game.** Drag in the folder with the game's files. The app pairs the base game, its update and DLC, and tells you whether nxnative supports it (tested / in progress / no profile).
-4. **Make Game Pack.** The first build of a game takes 10 to 60 minutes (most of it compiling shaders); later builds reuse the build files. Packs go to the game pack folder set in Settings.
-5. **Install NX Pocket.** With the iPhone connected (Developer Mode on), click Install NX Pocket; the app builds it with your team and installs it. Or sideload the IPA from Releases with AltStore or a similar tool (Sideloadly drops the Increased Memory Limit entitlement).
-6. **Send to iPhone**, or AirDrop the pack, then **Import Game Pack** in NX Pocket. Choose **Use in Place** for a pack already on the phone. The first start of a game prepares its shaders once.
+1. **NX Pocket for Mac.** Download the Mac app (zip) from Releases and move the app to Applications. It is not notarized: the first time, open it, then allow it in System Settings → Privacy & Security → Open Anyway. Or build it yourself: `dm/mac/pocket/build.sh <output folder>`.
+2. **Get the code.** Packs are made by this repository's scripts, so NX Pocket for Mac needs a copy of it: `git clone https://github.com/zkkzkk/nx-pocket.git` (on a drive with room for your games' build files). Setup asks for this folder.
+3. **Setup.** The first start checks Xcode and installs what a build needs (Homebrew tools, Python modules). Point it at your `prod.keys`; only the path is kept, the keys are never copied.
+4. **Add a game.** Drag in the folder with the game's files. The app pairs the base game, its update and DLC, and tells you whether nxnative supports it (tested / in progress / no profile).
+5. **Make Game Pack.** The first build of a game takes 10 to 60 minutes (most of it compiling shaders); later builds reuse the build files. Packs go to the game pack folder set in Settings.
+6. **Install NX Pocket.** With the iPhone connected (Developer Mode on), click Install NX Pocket; the app builds it with your team and installs it. Or sideload the IPA from Releases with AltStore or a similar tool (Sideloadly drops the Increased Memory Limit entitlement).
+7. **Send to iPhone**, or AirDrop the pack, then **Import Game Pack** in NX Pocket. Choose **Use in Place** for a pack already on the phone. The first start of a game prepares its shaders once.
 
 ## Signing
 
