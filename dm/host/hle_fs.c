@@ -129,9 +129,11 @@ static int dm_fs_test_fail(const char *pt) {
 }
 static int in_txn_dir(const char *hp) { return save_txn_from_path(hp); }
 static int rm_tree(const char *p);
-// Reads and checks a RomFS image's header and index; NULL (and a red line) when it is not a complete image
+// Reads and checks a RomFS image's header and index; NULL (and a red line) when it is not a complete image. The game files (DM_ROMFS) may be the start of a single-file
+// game pack (format 3): DM_ROMFS_SIZE then says where the image ends in it. Reads stay inside the image, since every entry lies before its index
 static romfs_img *img_open(const char *path) {
-    romfs_img *m = romfs_image_open(path);
+    const char *rom = getenv("DM_ROMFS"), *len = getenv("DM_ROMFS_SIZE");
+    romfs_img *m = romfs_image_open_len(path, rom && len && !strcmp(rom, path) ? strtoull(len, NULL, 10) : 0);
     if (m) LOG("fs RomFS image %s: %llu entries", path, (unsigned long long)m->n);
     else LOG("[RED] fs RomFS image %s is not a complete image (copied in part? errno=%d)", path, errno);
     return m;
@@ -723,6 +725,8 @@ HLE_FORCE("_ZN2nn2fs14CommitSaveDataEPKc", "fsp-srv; same as Commit (SDK 11's ol
 HLE_FORCE("_ZN2nn2fs7UnmountEPKc", "fsp-srv; the mount table is permanent, unmounting is a no-op", void, h_fs_Unmount, const char *name) { (void)name; }
 
 // ---------- Files ----------
+// Observer of the files the game opens for reading (guest path; on the guest thread, after a successful open): hle_touchhint.c tells the scene from the asset folders read
+void (*g_dm_fs_open_hook)(const char *path);
 HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Result, h_fs_OpenFile, uint64_t *out, const char *path, int mode) {
     int mi; int64_t k;
     if (img_path(path, &mi, &k)) {
@@ -731,6 +735,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
         if (mode & (MODE_WRITE | MODE_APPEND)) { LOG("fs write to a read-only mount: %s", path); return RES_FAIL; }
         *out = FH_OUT(IMG_HANDLE(mi, k));
         if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → image entry %lld", (now_ns() - g_t0_ns) / 1e9, path, mode, (long long)k);
+        if (g_dm_fs_open_hook) g_dm_fs_open_hook(path);
         return RES_OK;
     }
     HP(path);
@@ -747,6 +752,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     fslog_init();
     if (g_fslog && fd < 4096) { pthread_mutex_lock(&g_fslog_lock); free(g_fdpath[fd]); g_fdpath[fd] = strdup(path); pthread_mutex_unlock(&g_fslog_lock); }
     if (g_flag.fs) LOG("fs open [%.2fs] %s mode=%d → fd %d", (now_ns() - g_t0_ns) / 1e9, path, mode, fd);
+    if (g_dm_fs_open_hook && !(mode & (MODE_WRITE | MODE_APPEND))) g_dm_fs_open_hook(path);
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) { h = FH_IN(h);

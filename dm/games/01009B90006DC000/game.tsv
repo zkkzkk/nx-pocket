@@ -1,0 +1,45 @@
+# Game profile of Super Mario Maker 2, update 3.0.3 (v458752).
+# Nintendo sead / agl / gsys, SDK 7.3.2, NVN; see README.md for validation.
+# Format: see dm/games/README.md
+
+# ---- Identity ----
+title_id	01009B90006DC000
+program_id	01009B90006DC000
+
+# ---- App ----
+name	Super Mario Maker 2
+ipa	SuperMarioMaker2.ipa
+app_category	public.app-category.games
+
+# Handheld exposes the game touchscreen used by the course editor.
+op_mode	handheld
+# All controller buttons remain available below the picture in Duo portrait.
+pad_layout	full
+# The game records conditional rendering during boot; replay its predicates on the GPU.
+render_cond	on
+# Render jobs race scene setup and teardown on other guest threads (g3d materials, ui2d draw state, command buffers): run one guest thread at a time.
+core_lock	all
+
+# ---- Versions ----
+build	v458752	3.0.3	main=c2dc405ac414c37c8b1c50219c7a0f0c	sdk=fcf93a41b08c5193a1410d262602dc62
+package	v458752
+shader_versions	v458752
+
+# ---- Files ----
+# every module main imports from
+modules	main sdk
+romfs_marker	Pack/QuestModel.pack
+zip_store	.bwav:.pack:.szs:.xtx:.zs:.metallib
+
+# ---- Memory ----
+# main sets a heap of at most the pool − 64 MB: a 3328 MB heap region
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 0 MB of system resource: IsVirtualAddressMemoryEnabled is false, as on Horizon (Big Brain Academy: Brain vs. Brain sets a heap only then)
+sys_resource	0x0
+
+# ---- Shader split ----
+shader_groups	/Sound/=sound /Layout/=layout /Model/=model /Course/=course /Replay/=replay /Bake/=bake /EventFlow/=eventflow /Pack/=pack /Message/=message /Rumble/=rumble /Font/=font /System/=system /Env/=env /Mii/=mii /CourseInfo/=courseinfo /ELink2/=elink2 /Effect/=effect /Event/=event /Map/=map /MyWorld/=myworld /Palette/=palette /SLink2/=slink2
+shader_note	Super Mario Maker 2 shaders

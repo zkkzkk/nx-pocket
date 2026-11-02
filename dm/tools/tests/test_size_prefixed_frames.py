@@ -7,7 +7,9 @@ import os
 import struct
 import sys
 import unittest
+import tempfile
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / 'dm/gfx/tools'))
@@ -26,6 +28,23 @@ def unsized(d):
 
 
 class Unsized(unittest.TestCase):
+    def test_zstd_shader_member_inside_sarc(self):
+        shader = bytearray(0x80); shader[:8] = b'BNSH\0\0\0\0'
+        struct.pack_into('<I', shader, 0x1c, len(shader)); shader[0x60:0x64] = b'grsc'
+        compressed = ss.zstd_mod().compress(bytes(shader))
+        archive = bytearray(0x100)
+        struct.pack_into('<4sHHII', archive, 0, b'SARC', 0x14, 0xfeff, 0x100 + len(compressed), 0x100)
+        struct.pack_into('<4sHHI', archive, 0x14, b'SFAT', 12, 1, 0x65)
+        struct.pack_into('<IIII', archive, 0x20, 0, 0x1000000, 0, len(compressed))
+        archive[0x30:0x34] = b'SFNT'; archive[0x38:0x41] = b'model.zs\0'
+        archive += compressed
+        self.assertNotIn(b'BNSH\0\0\0\0', archive)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'models.pack'; path.write_bytes(archive)
+            with mock.patch.object(ss, 'bnsh_shaders', return_value=[]) as reader:
+                ss.scan_file((str(path), 'models.pack'))
+            reader.assert_called_once_with(bytes(shader), 0, '/models.pack/model.zs')
+
     def test_zstd_frame(self):
         d = struct.pack('<I', len(BODY)) + ss.zstd_mod().compress(BODY)
         self.assertEqual(d[4:8], ss.ZSTD_MAGIC)

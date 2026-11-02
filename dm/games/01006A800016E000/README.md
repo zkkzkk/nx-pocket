@@ -12,7 +12,7 @@ Update 13.0.5 (`v2031616`) over the base game, with its 99 DLC licences; SDK 8.2
 | `sys_resource 0x1000000` | `game.tsv` | the NPDM declares 16 MB of system resource (virtual address memory); `main` never sets a heap |
 | NRO modules | `dm/tools/nro_collect.py` (`nro.tsv`), `loader.c` "NRO modules", `hle_ro.c`, `gen_embed.py` | the fighter, item and common scripts; see [Fighter code at run time](#fighter-code-at-run-time) |
 
-No `pad_layout` key (the iPhone pad starts in the 3D layout).
+`pad_layout full` explicitly starts the iPhone pad in the 3D layout, including the right stick and shoulder controls.
 
 ## Memory
 
@@ -20,6 +20,81 @@ No `pad_layout` key (the iPhone pad starts in the 3D layout).
 - Booted once with a 64 GB alias region (`mem_reserve 0x1030000000`, `mem_alias 0x1008000000`) and `DM_SVC=1`'s map log: the game commits from the region's start upward (1.73 GB contiguous at the title, 75 s in) and its page tables (the node pool) from the top; a battle commits up to 2.5 GB (`DM_ALIAS_WINDOWS`).
 - **Current: other builds of `main` (GitHub issue #375, 13.0.1 `b9b166df…`).** The 11 cuts are keyed to 13.0.5's build, so another build packed from a derived profile got none and aborted at the same place. They are now also one function-matched patch (`MATCH_CUTS`) of the four functions they lie in: the constructor (`main+0x37c9a20`, 472 bytes, 8 of them) and the three functions with a region-end bound (`+0x37c9c00`, `+0x37ca180`, `+0x37caf10`). It applies only when all four match, since a region cut in some and not the others would put the node pool outside the region. On 13.0.5 it gives exactly the registered cuts. The base game 1.0.0 (`fd471eb4…`, extracted ExeFS only) has the same allocator, the 62 GB constant at five sites (`main+0x27f869c`, `+0x27f86d4`, `+0x27f8868`, `+0x27f9108`, `+0x27f9c80`), but none of the four functions is the same code, so the patch does not apply there and the NSP script says so. 13.0.1 has not been checked here (no copy): the issue's search for the original words found none, but a search of the NSO file itself would miss them, as its segments are compressed. Open: whether 13.0.1's four functions match; if not, its own implementation under the same name, reviewed by disassembly.
 - The cut region still did not fit: SDK 8 has the same 1 GB node area and 1 GB alignment of regions of 1 GB and more as the newer SDKs (constructor `sdk+0x336b40`, `orr w9, wzr, #0x3fe00000` at `+0x336b50` / `+0x336bf0`; `VammManager::AllocateAddressRegion`'s alignment at `+0x336d5c`); with them it started 1.95 GB into the alias region (measured with a 64 GB one). They are cut in `sdk_patches.py` as on DRAGON QUEST XI S's SDK 7.3.2 build ([01006C300E9F0000](../01006C300E9F0000/README.md)), whose AddressRegionManager this is at other offsets; the region then starts 64 MB into the 4.375 GB alias region of the 5 GB block.
+
+## Local 13.0.4 bring-up (2026-10-26)
+
+The user's base plus update v1966080 extracts as 13.0.4. Its main build is
+`3eae0063b12fd81e99fb5980ba562970`; SDK and movie module builds are identical
+to 13.0.5. The 99 DLC licences and 98 current NRO modules are present.
+
+The allocator constructor is at `main+0x37c9470`. The original instructions of
+all 11 13.0.5 allocator cuts match at a unique uniform delta of `-0x5b0`.
+Disassembly confirms the 62 GB reservation at `+0x37c94ac`, node pool start
+at `+0x37c94c0` / `+0x37c94c8`, initial free units at `+0x37c95e8` /
+`+0x37c95ec`, and the other region-end bounds at `+0x37c96a0`, `+0x37c9e1c`,
+`+0x37ca9b8`. Upstream's function-matched rule (`MATCH_CUTS` in `patches.py`)
+finds exactly these 11 sites in 13.0.4's main (checked 2026-10-30 with
+`nso_match.resolve` on the extracted main), so the build needs no CUTS of its
+own; the rewriter's original-byte assertions still apply.
+
+A Mac bootstrap check using the normal 5 GB profile and all 11 cuts passed
+static initialization and reached `nnMain`, without red lines or a crash.
+All 35,012 shaders compiled successfully for iOS, including the geometry shader;
+the shadow-input and pulling variants reported no failures, and all runtime
+binding slots were decoded. The signed Release app was installed on the user's
+iPhone Duo (iOS 27.1), with the Increased Memory Limit entitlement. Its IPA is
+18.13 GiB and passed a full archive CRC check. On 2026-10-27 the installed app
+started on the physical Duo, played the opening movie, accepted a scripted A
+press and displayed the first-launch DLC notifications in Simplified Chinese.
+The user took over at that point and asked to stop automated testing. A battle
+and posture transitions have not been validated for this local 13.0.4 build.
+
+The build reuses the user's Halfold/Duo shell integration already validated
+with Rhythm Heaven, with its own app ID (`com.example.smashultimate`) and save
+container. This delivery targets iPhone only. The shader tool builds Mac
+intermediates as part of preparing the iOS libraries; no standalone Mac app
+was built or tested for this delivery.
+
+### First iPhone gameplay performance (2026-10-27)
+
+The user reported brief hitches during Final Smashes and dense effects. The
+retrieved first-run log reaches frame 15,687 at 278.15 s. Excluding the first
+60 s, 151 of the 153 logged frames lasting at least 50 ms spend at least half
+their time loading shader libraries or creating render pipelines. At frame
+13,465 (239.93 s), the whole frame takes 350.1 ms, of which 345.4 ms is this
+preparation; GPU time is 5.8 ms. Logged long frames after 60 s have a maximum
+GPU time of 9.7 ms. Thermal state remains nominal in the recorded reports,
+and later steady windows report 60 fps with a footprint around 2 GiB.
+
+The first launch had an empty prewarm list and used the standard iOS pipeline
+path (Metal 4 was off). The device has now recorded 2,119 entries in
+`Documents/pso_user.tsv`: 1,177 shaders, 937 render pipelines and five compute
+pipelines. The existing startup warmer prepares those entries before the
+next run's first frame; see [Prewarm lists](../../../docs/development.md#prewarm-lists).
+Repeated-scene comparison after restarting is pending. These measurements
+identify first-use preparation as a major hitch source in this log; they do
+not establish the cause of every effect-heavy slowdown. No renderer setting
+was changed, and automated gameplay remained stopped at the user's request.
+
+The user clarified that the same move hitches on every use during combat.
+That repeated symptom remains open: the retrieved log has no move markers,
+and a second retrieval was byte-identical, so it provides no new repeated-move
+comparison. After 60 s, 75 logged long frames create no pipeline or shader
+library; the longest takes 119.2 ms with 0.3 ms in submit/present and 1.1 ms
+of GPU work. This shows that preparation alone does not explain all recorded
+long frames, but those frames cannot yet be assigned to the reported attack.
+Identify the fighter, move and stage, then correlate repeated uses with frame
+timing and CPU-thread / GPU-pass measurements before changing the renderer.
+
+
+## Local play
+
+Local wireless over the LAN (profile key `local_play lan`, the launcher's **Local play**; [services](../../../docs/reference/services.md#local-network-play)). Played on the Mac, 2026-10-30: two hosts on one Mac, one on `lo0` and one on `en0`, each bound to its own address (`DM_NET_BIND=1`) with its own user (`DM_DEVICE_ID`, `DM_NICK`), the joining one in the iPhone's mode (`DM_NET_UNICAST=1`, the host's address in `DM_NET_PEERS`). From the Smash menu, ZR, the sidebar's Local Wireless (the first visit asks for the online name card once; + saves it), Create Room (+), the stage vote prompt; on the other, the room in the list, which asks the host ("wants to join": OK), the stage vote, fighter select (the cursor on a fighter only previews it: A picks it), + readies, and the host starts with L+R. Battles at 60 fps on both with identical positions, damage and timer (0.05 s apart). Pia's traffic: UDP port 12345 between the nodes, its broadcasts to the subnet sent as unicasts to the room.
+
+Three host fixes were needed past the protocol: socket errors in Linux's numbering (2618-0006 right after Create Room), a play-history key (the room closed with "connection error"), and a user of its own on each console ("cannot join").
+
+- **Open:** not yet played on two iPhones or with a Switch running ldn_mitm; host migration (Smash's `LdnHostMigrationJob`, `CreateNetworkPrivate` / `ConnectPrivate`) is implemented but untested.
+- **Open:** left idle for about 4 minutes in its attract demo (fighter NROs unloaded), the game crashed at `main+0x359cfe0` (null + 8) on both Mac hosts, before any network call; seen once, with local play on.
 
 ## Fighter code at run time
 
@@ -70,3 +145,6 @@ General host changes first needed here; each applies to every game:
 
 - The one geometry shader among the 35,012: whether it builds is not recorded.
 - The base game 1.0.0 (v0) packed alone (a derived profile) stops before the address region check: the NRO collection's `data.arc` reader (`dm/gfx/tools/smash_arc.py`) knows only 13.x's file system table, and 1.0.0's is not one zstd frame (`ZstdError: Unknown frame descriptor`); with the NROs skipped, the rewrite of its `main` (`fd471eb4…`) stops at a jump table it cannot resolve (`patch_nso.py`, `jump table f5c9cc`). Its engine region is not measured.
+- Local 13.0.4 iPhone battle and posture-transition validation: startup and
+  Chinese first-launch DLC notifications passed; further testing was handed
+  over to the user at their request.

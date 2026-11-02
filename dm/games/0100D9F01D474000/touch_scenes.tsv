@@ -1,0 +1,82 @@
+# Touch hints of Rhythm Heaven Groove: which buttons each scene uses, for the iPhone gamepad's Rhythm layout (pad_layout rhythm; hle_touchhint.c has the format).
+# The right half of the controls area always presses A; the left half follows these rows.
+# From MIT-licensed Touchable (github.com/MZhao-ouo/Touchable, by mzhao: internal/games/rhythm-heaven/runtime/rh_touch.c). Its notes:
+#   a minigame shows its title card from graph/prologue/<name>/ and plays from graph/scene/<name>/; menus read graph/menu/ and results graph/result/.
+#   A remix reads several scene folders after its title card, so the keys of every scene read since the last title card are combined.
+#   The level rows list the buttons each minigame uses besides A, from the button icons in the controller prompts of mesg/CN/CNzh/stage_<name>_00.msbt
+#   (labels without the "H" suffix, which describe a single sideways Joy-Con). Y (hold for a demo), - (skip practice) and + (pause) are not listed: the gamepad has keys for them.
+#   BeatSpell (graph/beatspell/) steps with B or down, casts with A or right, backflips with left or Y; its map and lists use up / down, X and Y: the left half presses B, with the
+#   four directions, X and Y shown too. Drum Lessons (graph/scene/drummer/) use almost every button: the whole controller.
+root	graph
+rule	menu	*	menu
+rule	result	*	menu
+rule	epilogue	*	menu
+rule	boot	*	menu
+rule	beatspell	*	set	B+showdpad+showx+showy
+rule	prologue	common	skip
+rule	prologue	*	set	@
+rule	scene	common	skip
+rule	scene	multi_common	skip
+rule	scene	*	add	@
+# More buttons than two areas hold, or no prompts to read (many): the left half is four directions. remix adds no keys itself; its scenes do
+level	birds	A
+level	block	A
+level	cooking	A
+level	flydisc	A
+level	fugu	A
+level	grasp	A
+level	guardian	A
+level	hammer	A
+level	hungry	A
+level	insect	A
+level	kaeru	A
+level	kukan	A
+level	moon	A
+level	pumpup	A
+level	putilabo	A
+level	rabbit	A
+level	ring	A
+level	rock	A
+level	rocket	A
+level	rope	A
+level	samurai	A
+level	shinkai	A
+level	shooting	A
+level	snack	A
+level	spinning	A
+level	teatime	A
+level	tennis	A
+level	the_a	A
+level	thunder	A
+level	virus	A
+level	volley	A
+level	bacteria	A+down
+level	blanco	A+down
+level	cars	A+down
+level	hurdle	A+down
+level	owl	A+down
+level	parasol	A+down
+level	skater	A+down
+level	softcatch	A+down
+level	brush	A+left
+level	clap	A+left
+level	commander	A+left
+level	crab	A+left
+level	onion	A+left
+level	soccer	A+left
+level	talk	A+left
+level	tono2	A+left
+level	trolley	A+left
+level	wiper	A+left
+level	rolling	A+right
+level	dancer	A+left+right
+level	master	A+left+right
+level	foot_race	A+B
+level	quiz	A+B
+level	audio_tile	many
+level	konkon	many
+level	nervous	many
+level	doc_comic	many
+level	doc_text	many
+level	drummer	pad
+level	remix	none

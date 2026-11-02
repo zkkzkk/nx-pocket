@@ -39,7 +39,7 @@ struct LauncherView: View {
                         Button("Reset to tested defaults") { m.reset() }
                             .disabled(!m.changed)
                     } footer: {
-                        Text("Brings back all settings this game was tested with.")
+                        Text("Restores the settings this game was tested with.")
                     }
                 }
             }

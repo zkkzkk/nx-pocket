@@ -73,6 +73,13 @@ The game may also write into an NVN object directly, without an NVN call, throug
 - **Fix:** such a pool gets an address range of its own at `MemoryPoolInitialize` (reserved, inaccessible: 64 GB on the Mac, at most 1 GB on iOS), and each mapping request `vm_remap`s the physical pages over its part of the range, so virtual addresses read and write the same memory, as the GPU's page table does. Each run of mapped pages is registered with the replay like a pool of its own and rebuilt when a request joins or splits runs (`vpool_*` in `hle_nvn.c`). Mario's 128 MB pool, mapped whole onto one physical pool, keeps the alias. The log reports the mapped high-water mark per 128 MB.
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md).
 
+### A pool's sparse record checked against the live ones
+
+- **Symptom:** `CRASH sig=11` in `vpt_walk` under `pkg_upload` (`tex_mtl` ← `tex_by_id`), on a wild address, right after `CPU-written texture … uploaded / re-uploaded like a swizzled texture`.
+- **Cause:** the host keeps a sparse pool's page table (`struct vpool`) and points to it from `pool_t.vp`, which lies in the game's own `NVNmemoryPool`. A texture keeps its pool pointer, and the record was read through that field without checking it: Mario Tennis Aces uploaded a new 32x32x32 CPU-written texture 893 s into a session of local play rooms made and left, and the field held a stray pointer (the pool object finalized and its memory reused, or written by the game).
+- **Fix:** a pool counts as sparse only while its `vp` is one of the live records and that record names this pool (`vpool_live`, used by `vpool_at`, `nvn_sparse_pool` and `vpool_drop`); anything else is an ordinary pool, read from its storage.
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md) (iPhone; not reproduced on the Mac: the cause is read from the crash's registers and the code).
+
 ### Virtual pools of one texture each, mapped before and after the texture
 
 - **Symptom:** `[RED] MapVirtual: non-contiguous mapping (true sparse) not implemented`, on small virtual pools; streamed textures black or missing (OCTOPATH TRAVELER's village ground and plants).
@@ -165,8 +172,22 @@ The game may also write into an NVN object directly, without an NVN call, throug
 
 - **Symptom:** `FATAL NVN command memory: the game's pool is empty…`.
 - **Cause:** our command records are larger than real NVN commands, so command buffers the game sizes for hardware overflow; when the game's out-of-memory callback declines to add memory, the host lends a segment. Many small command buffers each overflowing once per frame exhausted a fixed pool of 64 × 1 MB.
-- **Fix** (`hle_nvn.c`): the pool now grows on demand (256 KB segments, abort only beyond 1 GB; `hostseg_take`). A segment is released only when the game re-grants memory overlapping the guest bytes of the recording that jumped into it (`hostseg_release` in `AddCommandMemory`): the game records setup blocks once and keeps `CallCommands`-ing them for many frames, so recycling segments after a fixed number of frames would overwrite live recordings. An empty-pool grant of at most 4 KB outside a recording gets a 4 KB segment, a record larger than 256 KB gets a segment that holds it, and the cap counts every segment's bytes (`hostseg_size`).
+- **Fix** (`hle_nvn.c`): the pool now grows on demand (256 KB segments, abort only beyond 1 GB; `hostseg_take`). A segment is released only when command writes actually overwrite the guest bytes of the recording that jumped into it (`hostseg_release` before record and JUMP writes): the game records setup blocks once and keeps `CallCommands`-ing them for many frames, so recycling segments after a fixed number of frames would overwrite live recordings. An empty-pool grant of at most 4 KB outside a recording gets a 4 KB segment, a record larger than 256 KB gets a segment that holds it, and the cap counts every segment's bytes (`hostseg_size`).
 - **Found on:** [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md) (the many small command buffers: its opening course, per the comment at `HOSTSEG_SZ` in `hle_nvn.c`), [Super Mario Odyssey](../../dm/games/0100000000010000/README.md) (it hands out many 512-byte grants before recording, and with no recording to reclaim them by, 256 KB each reached the cap entering the Wooded Kingdom: the 4 KB segments).
+
+### Command-memory grants overlap live neighboring recordings
+
+- **Symptom:** a recorded CALL reaches a reused host segment, with invalid record pointers in `mtl_exec`; the phone reported a null CALL target after its first host overflow segment.
+- **Cause:** a grant describes writable capacity, not bytes already overwritten. Super Mario Maker 2 grants `max(measured slot size, 512)` for adjacent small recordings. Reclaiming overflow segments across that entire grant can retire a neighboring recording before any of its bytes change.
+- **Fix:** retire overlapping origins immediately before actual record-header/payload and JUMP writes. A JUMP keeps the newly allocated segment it links to. A regression retains a neighbor through both an overlapping unused grant and preceding writes, then retires it only when its origin is overwritten. The NVN suite passes 162 checks with Wonder's non-conditional profile. This establishes the lifetime bug and fix; it does not prove that every reported phone crash has this cause.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md).
+
+### A wholly host-backed recording has no guest origin
+
+- **Symptom:** a cached empty handle turns into a different command list after neighboring guest memory is written.
+- **Cause:** a new recording can start after the preceding recording filled its grant exactly. Its first END then lives wholly in a host segment; `cmd_new_segment` writes no guest JUMP in this case. Assigning the unused next guest bytes as that segment's origin allowed unrelated writes there to recycle its live handle.
+- **Fix:** a new segment gets a guest origin only when the recording already contains a guest record and is linked by a JUMP (`recording == 1`). A wholly host-backed recording has unknown origin and remains retained. The regression fills a 64-byte guest grant with eight empty recordings, overflows the ninth, then overwrites the next guest slot and causes another overflow. The old origin rule fails retention and changes the empty handle's END to an UPDATE_UB; the correction passes all 165 NVN checks with the non-conditional Wonder profile.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md) during follow-up investigation. This regression proves a lifetime defect; other null-scope/record-list crashes remain open.
 
 ### What `GetCommandMemoryUsed` counts
 
@@ -180,6 +201,20 @@ Games read this count as a position in their own command memory and size their h
 - **Fix:** the count now resets at `AddCommandMemory` (`hle_nvn.c`).
 - **Check:** Super Mario Bros. Wonder and Super Mario Odyssey checked unchanged after the reset.
 - **Found on:** [Fire Emblem: Three Houses](../../dm/games/010055D009F78000/README.md) (the count from `AddCommandMemory`); [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md) (host segments counted).
+
+### `CopyCommands` copies the commands
+
+- **Symptom:** a match and the Adventure map draw only the HUD and the effects: the G-buffer pass holds the crowd's billboards but none of the court's or the players' draws, which their shadow pass has.
+- **Cause:** the host recorded `CopyCommands` as a CALL of the source, as it does `CallCommands`. NVN copies the commands, so the source's memory may be recorded over right after. The game records each model into a command buffer of its own, copies it into the frame's (`main+0x3c60`), and records the same object again into the same memory for its next view; every copy replayed the last recording.
+- **Fix:** `CopyCommands` copies the records up to the source's END, through its JUMPs, moving the snapshot pointers that point into a record with it (`cmd_copy` in `hle_nvn.c`); `CallCommands` stays a CALL. A record whose next is the END keeps only the END's 8 bytes after it instead of a JUMP's, as the game sizes each copy's memory exactly by the source's `GetCommandMemoryUsed` (`main+0x96824`).
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md).
+
+### Per-object command buffers sized by the count
+
+- **Symptom:** the game aborts in its own allocator (`main+0x62aac`, a trap after the unlock) as a court loads.
+- **Cause:** the game gives each of about 7,400 per-object command buffers max(512, `GetCommandMemoryUsed`) bytes of a fixed 16 MB command pool, in one frame. The host's viewport record kept room for all 16 viewports (400 bytes), its render-target record a snapshot for a depth target it did not have, and its single texture bind took 32 bytes; about 60 binds and two of each of the others in each buffer came to 16.0 MB.
+- **Fix:** viewports are recorded by count, the render-target record takes a depth snapshot only for a depth target, and a single texture bind takes 24 bytes with its handle still 16 bytes in (`p_bind_tex1`); the pool peaks at 14.95 MB. See [What `GetCommandMemoryUsed` counts](#what-getcommandmemoryused-counts).
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md).
 
 ### Prerecorded lists in slots of their measured size
 

@@ -5,6 +5,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <AVFAudio/AVFAudio.h>
+#import <CoreMotion/CoreMotion.h>
 #include <errno.h>
 #include "front.h"
 #include "hle.h"
@@ -12,20 +13,42 @@
 #include "haptics_apple.h"
 #include "save_sync.h"
 #import "CloudSaves.h"
+#include <stdatomic.h>
+#include "Halfold/hf_kit.h"
 
 UIView *dm_gamepad_view(CGRect frame);
+void dm_gamepad_set_insets(UIView *pad, UIEdgeInsets insets);
+void dm_gamepad_set_turned(int turned);
 void dm_gamepad_reset(void);
 void dm_gamepad_active(void);
 void front_ios_boot(void);
 int front_ios_boot_ok(void);
 const char *front_ios_boot_message(void);   // main.m: why a build that keeps the game files off the IPA found none usable (NULL = the generic hint)
 const char *front_ios_device_message(void);   // main.m: why this device cannot run the games (its GPU has no BC textures; NULL = supported)
+#if DM_PACK   // a game pack: NX Pocket showed the launcher before it loaded the pack, and the settings are in the environment
+static bool dm_show_launcher(void *view_controller, void (*done)(void)) { (void)view_controller; (void)done; return false; }
+#else
 bool dm_show_launcher(void *view_controller, void (*done)(void));   // Launcher.swift: false = no launcher (no dm/launcher.json, or DM_LAUNCHER=0)
+#endif
 
 static CAMetalLayer *g_layer;
 static void front_ios_power_watch(void);
 static void front_ios_audio_watch(void);
 static UILabel *front_ios_fps_label(void);
+
+// Halfold (Sources/Halfold/hf_kit.h, docs/nx-pocket/foldable.zh-CN.md): the posture from the window and the hinge, and the regions of the picture and the controls. Landscape: both are the whole
+// window. Portrait: the picture above the screen's middle, the controls below (the iPhone Duo's inner screen folds across its middle when held upright). Tabletop: the hinge
+// partly open, the controls below the hinge band. g_hinge is the hinge status (UIHingeStatus, 0 until the hinge interaction reports)
+static _Atomic int g_hinge;
+// The fold's real place: UIKit's division region (iOS 27.1), in the stage's coordinates, read by DmRootVC viewDidLayoutSubviews on the main thread (where the pad lays out too);
+// none known: the window's middle (hf_layout_make_at). From upstream PR #683
+static hf_rect g_division; static int g_have_division;
+// Without a hinge across the screen (outer screen, ordinary iPhone) the fit mode's picture sits at the top at its own ratio, so no black bar is left above it
+hf_layout front_ios_layout(CGRect b, UIEdgeInsets safe) {
+    int hinge = atomic_load(&g_hinge); double aspect = hf_fill_parse(getenv("DM_FIT")) == HF_FIT ? 16.0 / 9 : 0;
+    return hf_layout_make_at(hf_posture_of(b.size.width, b.size.height, hinge), b.size.width, b.size.height, (hf_insets){safe.top, safe.left, safe.bottom, safe.right}, hinge, aspect,
+                             g_have_division ? &g_division : 0);
+}
 
 @interface DmGameView : UIView
 @end
@@ -58,7 +81,23 @@ static CGRect fit_16_9(CGRect b) {   // the largest centered 16:9 rectangle in b
 }
 static void tv_attach(void);
 
+// The root view reads the division regions in updateConstraints: that registers it for UIKit's invalidation, so a fold that moves (another screen, the hinge opening) lays the
+// view out again (from upstream PR #683)
+@interface DmRootView : UIView
+@end
+@implementation DmRootView
++ (BOOL)requiresConstraintBasedLayout { return YES; }
+- (void)updateConstraints {
+    if (@available(iOS 27.1, *)) { [self reservedRegionsOfKind:UIViewReservedRegionKind.divisionRegionKind options:UIViewReservedRegionQueryOptionsIncludeInactive]; [self setNeedsLayout]; }
+    [super updateConstraints];
+}
+@end
+
 @interface DmRootVC : UIViewController
+@property (nonatomic, strong) UIView *stage;   // holds the game view, the pad and the counter; turned upside down when the phone is but the interface is not (deviceTurned)
+@property (nonatomic, copy) NSString *offsetKey;   // deviceTurned without turnMotion: the screen (native size) whose gravity offset _turn holds
+@property (nonatomic, strong) NSTimer *turnTimer;
+@property (nonatomic, strong) CMMotionManager *turnMotion;   // deviceTurned: gravity in the root view's frame (iOS 27), nil where there is none (then gravity and calibration)
 @property (nonatomic, strong) DmGameView *game;
 @property (nonatomic, strong) UIView *pad;
 @property (nonatomic, strong) UILabel *fps;
@@ -67,8 +106,12 @@ static void tv_attach(void);
 - (void)startGame;
 @end
 static DmRootVC *g_root;
+#if DM_PACK
+static void exit_after_env(void);   // NX Pocket's DM_EXIT_AFTER / DM_HOME_AFTER (below, with Home and Exit)
+#endif
 static void launcher_done(void) { [g_root startGame]; }
-@implementation DmRootVC
+@implementation DmRootVC { hf_flip _turn; }   // the upside-down check (deviceTurned)
+- (void)loadView { self.view = [DmRootView new]; }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.blackColor;
@@ -93,29 +136,130 @@ static void launcher_done(void) { [g_root startGame]; }
 // The game view, the pad and the frame-rate counter are made once the launcher has set the switches they read (DM_SHOW_FPS, DM_METAL_HUD); the host's loading began at app launch (main.m)
 - (void)startGame {
     if (self.game) return;
+#if DM_PACK
+    exit_after_env();
+#endif
     dm_cloud_saves_env();   // DM_SAVE_SYNC from the launcher's Cloud saves pick, before the game's first save mount reads it (CloudSaves.m, save_sync.h)
     front_hud_env();   // before the game view makes its device (an env file's DM_METAL_HUD sets it in main.m already)
+    self.stage = [[UIView alloc] initWithFrame:self.view.bounds];
+    [self.view addSubview:self.stage];
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
-    [self.view addSubview:self.game];
+    [self.stage addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
     if (getenv("DM_METAL_HUD") && atoi(getenv("DM_METAL_HUD"))) { g_layer.developerHUDProperties = @{@"mode": @"default"}; LOG("front end: Metal performance HUD on (DM_METAL_HUD)"); }   // Apple's HUD over the game: frame rate, frame and GPU time, memory
     dm_haptics_apple_init();
     self.pad = dm_gamepad_view(self.view.bounds);
     self.pad.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:self.pad];
+    [self.stage addSubview:self.pad];
     self.fps = front_ios_fps_label();   // above the pad, which hides while a controller is connected
-    if (self.fps) [self.view addSubview:self.fps];
+    if (self.fps) [self.stage addSubview:self.fps];
+    [self turnStart];
+    [self hingeWatch];
+    self.turnTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t) { (void)t; [self deviceTurned]; }];   // the upside-down check (deviceTurned)
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     tv_attach();   // a TV connected while the launcher showed
     front_ios_boot();
 }
+// Portrait either way up. iOS never gave this app an upside-down interface on the iPhone Duo (iOS 27.1 and 27.2, iOS 27.1 SDK: the home screen turns, the app does not), and
+// UIDevice's orientation there is a quarter turn off the inner screen and reads face up while the phone is held tilted, so the stage turns itself by HalfoldKit's rule
+// (hf_flip_update, docs/nx-pocket/foldable.zh-CN.md 3.3): half a turn when the interface is portrait and the picture is upside down, never when iOS turned the interface itself (upside down
+// or landscape). Which way is down for the picture: on iOS 27 Core Motion's gravity in the root view's frame (deviceMotionBody; the root view is the one the app never turns,
+// the stage is turned inside it), so whatever iOS did with the screen is already in it and nothing is calibrated. Elsewhere the accelerometer (DmGamepad.m dm_gravity) in the
+// device's own axes, whose offset from the interface is taken from the first held portrait reading after the game starts, or after the window moves to the other screen,
+// counted as upright: on a 27.2 Duo that reading was once taken held by the other end, and every later reading came out turned (picture upside down held upright). Each
+// change is logged
+int dm_gravity(double g[3]);
+- (void)turnStart {
+    CMMotionManager *m = [CMMotionManager new];
+    if (@available(iOS 27.0, *)) {
+        if (m.deviceMotionAvailable) {
+            m.deviceMotionUpdateInterval = 0.1; m.deviceMotionBody = self.view; [m startDeviceMotionUpdates]; self.turnMotion = m;   // read in deviceTurned (no handler)
+            hf_flip_init(&_turn, 0);   // the picture's own frame: upright is gravity straight down, no offset to learn
+            LOG("front end: upside-down check from gravity in the window's frame (deviceMotionBody), nothing calibrated"); return;
+        }
+    }
+    hf_flip_init(&_turn, -1);
+    LOG("front end: upside-down check from the accelerometer, the first portrait reading taken as upright");
+}
+static int quarter_of_interface(UIInterfaceOrientation io) {   // hf_kit.h's turns: interface landscape right is device landscape left
+    switch (io) { case UIInterfaceOrientationPortrait: return 0; case UIInterfaceOrientationLandscapeRight: return 1;
+                  case UIInterfaceOrientationPortraitUpsideDown: return 2; case UIInterfaceOrientationLandscapeLeft: return 3; default: return -1; }
+}
+- (void)deviceTurned {
+    UIWindowScene *ws = self.view.window.windowScene; if (!ws) return;
+    int iq = quarter_of_interface(ws.effectiveGeometry.interfaceOrientation), bq;
+    double g[3];
+    if (self.turnMotion) {   // gravity in the picture's frame, given to hf_flip_update as if in the device's (its quarter plus the interface's) with offset 0
+        CMDeviceMotion *d = self.turnMotion.deviceMotion; if (!d) return;
+        g[0] = d.gravity.x; g[1] = d.gravity.y; g[2] = d.gravity.z;
+        int pq = hf_quarter_of_gravity(g[0], g[1]);
+        bq = pq < 0 || iq < 0 ? -1 : (pq + iq) % 4;
+    } else {
+        if (!dm_gravity(g)) return;
+        CGRect nb = ws.screen.nativeBounds; NSString *key = [NSString stringWithFormat:@"%.0fx%.0f", nb.size.width, nb.size.height];
+        if (![key isEqualToString:self.offsetKey]) {   // another screen (folded / unfolded): measure its offset again, the current turn kept
+            self.offsetKey = key; int was = _turn.flipped; hf_flip_init(&_turn, -1); _turn.flipped = was;
+        }
+        bq = hf_quarter_of_gravity(g[0], g[1]);
+    }
+    int r = hf_flip_update(&_turn, bq, iq, CACurrentMediaTime());
+    if (r & HF_FLIP_OFFSET_FIRST) LOG("front end: gravity offset %d quarter turns on the %s screen (first portrait reading taken as upright)", _turn.offset, self.offsetKey.UTF8String);
+    if (!(r & HF_FLIP_CHANGED)) return;
+    LOG("front end: phone held %s in portrait (gravity %.2f %.2f %.2f) → picture turned %s", _turn.flipped ? "by its other end" : "upright", g[0], g[1], g[2], _turn.flipped ? "by the app" : "back");
+    [self.view setNeedsLayout];
+}
+// Tabletop: the hinge status from UIHingeInteraction (iOS 27.1). A status change re-lays the picture and the pad (front_ios_layout picks the posture); angle-only updates are ignored
+- (void)hingeWatch {
+    if (@available(iOS 27.1, *)) {
+        __weak DmRootVC *weak = self;
+        UIHingeInteraction *hi = [[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *i, UIHingeInteractionUpdate *u) {
+            (void)i; int st = u.hinge ? (int)u.hinge.status : 0;
+            if (atomic_exchange(&g_hinge, st) == st) return;
+            static const char *names[] = {"unknown", "closed", "partially open", "fully open"};
+            LOG("front end: hinge %s (%.0f degrees)", st >= 0 && st <= 3 ? names[st] : "?", u.hinge ? u.hinge.angle * 180 / M_PI : 0.0);
+            DmRootVC *me = weak; [me.view setNeedsLayout]; [me.pad setNeedsLayout];
+        }];
+        [self.view addInteraction:hi];
+        LOG("front end: hinge interaction on (tabletop layout when partially open in portrait)");
+    }
+}
+// The first division region that is a fold across the window, turned into the stage's coordinates (half a turn when the stage is upside down); a change re-lays the pad
+- (void)readDivision:(CGRect)b {
+    int have = 0; hf_rect d = {0, 0, 0, 0};
+    if (@available(iOS 27.1, *)) {
+        for (UIViewReservedRegion *r in [self.view reservedRegionsOfKind:UIViewReservedRegionKind.divisionRegionKind options:UIViewReservedRegionQueryOptionsIncludeInactive]) {
+            CGRect f = r.frame;
+            if (_turn.flipped) f = CGRectMake(b.size.width - CGRectGetMaxX(f), b.size.height - CGRectGetMaxY(f), f.size.width, f.size.height);
+            if (hf_division_of(b.size.width, b.size.height, (hf_rect){f.origin.x, f.origin.y, f.size.width, f.size.height}, &d)) { have = 1; break; }
+        }
+    }
+    if (have == g_have_division && (!have || !memcmp(&d, &g_division, sizeof d))) return;
+    g_have_division = have; g_division = d; [self.pad setNeedsLayout];
+    if (have) LOG("front end: fold at %.0f,%.0f %.0fx%.0f (division region)", d.x, d.y, d.w, d.h); else LOG("front end: no division region: the fold is taken at the window's middle");
+}
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    CGRect b = self.view.bounds; if (!self.game) return;
-    if (self.game.superview == self.view) self.game.frame = fit_16_9(b);   // on a TV the TV's view lays it out
-    if (self.fps) {   // the top row's free stretch: right of DmGamepad.m's L3 key (102 + 17 of its units from the safe edge), level with − / + (22 units down); u is its unit
-        CGRect s = UIEdgeInsetsInsetRect(b, self.view.safeAreaInsets); CGFloat u = MIN(b.size.height / 430.0, 1.3);
+    if (!self.game) return;
+    self.stage.transform = CGAffineTransformIdentity; self.stage.frame = self.view.bounds;
+    self.stage.transform = _turn.flipped ? CGAffineTransformMakeRotation(M_PI) : CGAffineTransformIdentity;
+    CGRect b = self.stage.bounds;
+    UIEdgeInsets si = self.view.safeAreaInsets;
+    if (_turn.flipped) si = UIEdgeInsetsMake(si.bottom, si.right, si.top, si.left);   // the safe area in the stage's turned coordinates
+    dm_gamepad_set_insets(self.pad, si); dm_gamepad_set_turned(_turn.flipped);
+    [self readDivision:b];
+    hf_layout L = front_ios_layout(b, si);   // the picture's and the controls' regions for the posture
+    static int last_posture = -1; static CGSize last_size;
+    if ((int)L.posture != last_posture || !CGSizeEqualToSize(last_size, b.size)) { last_posture = L.posture; last_size = b.size;
+        LOG("front end: posture %s, window %.0fx%.0f, picture region %.0f,%.0f %.0fx%.0f, controls region %.0f,%.0f %.0fx%.0f", hf_posture_name(L.posture), b.size.width, b.size.height,
+            L.picture.x, L.picture.y, L.picture.w, L.picture.h, L.controls.x, L.controls.y, L.controls.w, L.controls.h); }
+    hf_rect v = hf_view_frame(L.picture, 16.0 / 9, hf_fill_parse(getenv("DM_FIT")));   // fit: 16:9 inside the region; DM_FIT=stretch / crop (the launcher's fill mode): the whole region, the present fills it (nvn_mtl.m present_fit_mode)
+    if (self.game.superview == self.stage) self.game.frame = CGRectMake(v.x, v.y, v.w, v.h);   // on a TV the TV's view lays it out
+    if (self.fps && L.posture != HF_LANDSCAPE)   // portrait / tabletop: the picture region's top-left corner (the controls' top row is full on a narrow screen: it covered − on the Duo's outer screen)
+        self.fps.frame = CGRectMake(floor(L.picture.x + 6), floor(L.picture.y + 6), 64, 22);
+    else if (self.fps) {   // landscape: the top row's free stretch: right of DmGamepad.m's L3 key (102 + 17 of its units from the safe edge), level with − / + (22 units down); u is its unit
+        CGRect c = CGRectMake(L.controls.x, L.controls.y, L.controls.w, L.controls.h);
+        CGRect s = UIEdgeInsetsInsetRect(c, UIEdgeInsetsMake(L.controls_insets.top, L.controls_insets.left, L.controls_insets.bottom, L.controls_insets.right)); CGFloat u = MIN(c.size.height / 430.0, 1.3);
         self.fps.frame = CGRectMake(floor(CGRectGetMinX(s) + 130 * u), floor(CGRectGetMinY(s) + 22 * u - 11), 64, 22);
     }
 }
@@ -133,7 +277,7 @@ static void launcher_done(void) { [g_root startGame]; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }   // Edge gestures need two swipes, to avoid accidental exits
 - (BOOL)prefersStatusBarHidden { return YES; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskAll; }   // portrait either way up (a foldable is held by either end): picture above, controls below (front_ios_layout)
 @end
 UIViewController *front_ios_root(void) { return [DmRootVC new]; }
 
@@ -159,7 +303,7 @@ static void tv_attach(void) {
 }
 static void tv_detach(void) {
     DmGameView *v = g_root.game; g_tv = nil;
-    if (v && v.superview != g_root.view) { [g_root.view insertSubview:v atIndex:0]; [g_root.view setNeedsLayout]; }
+    if (v && v.superview != g_root.stage) { [g_root.stage insertSubview:v atIndex:0]; [g_root.view setNeedsLayout]; }   // back under the pad in the stage
     if (g_tv_mode_was >= 0) { dm_set_opmode(g_tv_mode_was); g_tv_mode_was = -1; }
     LOG("front end: TV disconnected, the picture is back on the phone");
 }
@@ -193,11 +337,12 @@ static void front_ios_power_watch(void) {
 }
 
 // Frame-rate counter: the frames put on screen in the last second (nvn_mtl.m counts them for NVN and for the Vulkan layer alike; frames the display link merged away are not counted).
-// On when the IPA was built with it (the NSP script's SHOW_FPS / --show-fps → DMShowFPS in Info.plist); DM_SHOW_FPS=0 / 1 in Documents/env.txt overrides that without a rebuild. NULL when off
+// On when the IPA was built with it (the NSP script's SHOW_FPS / --show-fps → DMShowFPS in Info.plist; showFPS in a pack's pack.json); DM_SHOW_FPS=0 / 1 in Documents/env.txt overrides that without a rebuild. NULL when off
 uint64_t mtl_present_count(void);
+BOOL front_ios_show_fps_default(void);   // main.m: DMShowFPS in Info.plist, or the pack's pack.json
 static UILabel *front_ios_fps_label(void) {
     const char *e = getenv("DM_SHOW_FPS");
-    if (!(e ? atoi(e) != 0 : [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMShowFPS"] boolValue])) return nil;
+    if (!(e ? atoi(e) != 0 : front_ios_show_fps_default())) return nil;
     UILabel *l = [UILabel new];
     l.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightSemibold]; l.textColor = UIColor.whiteColor; l.textAlignment = NSTextAlignmentCenter;
     l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45]; l.layer.cornerRadius = 6; l.layer.masksToBounds = YES; l.userInteractionEnabled = NO;
@@ -334,6 +479,59 @@ static void save_sync_background(void) {
         dispatch_async(dispatch_get_main_queue(), end);
     });
 }
+
+#if DM_PACK
+// NX Pocket, as a Switch's Home button: the Home pill left of − (DmGamepad.m) asks NX Pocket to show its home screen over the game, which it pauses as it would going to the
+// background (main.m dm_pack_suspend); Resume there carries on. Closing the game (NX Pocket's Close, or another game's Play) cannot unload a pack's host, so the app starts
+// over: the cloud save goes out, NX Pocket asks the system to open itself (LSApplicationWorkspace, as LiveContainer returns to its list) and ends; the system starts it again
+@protocol DmWorkspace <NSObject>
++ (id)defaultWorkspace;
+- (void)openApplicationWithBundleIdentifier:(NSString *)bundle configuration:(id)configuration completionHandler:(void (^)(BOOL ok, NSError *e))done;
+@end
+static void (*g_home)(void);   // NX Pocket's: show the home screen (main.m dm_pack_on_home)
+void front_ios_set_home(void (*f)(void)) { g_home = f; }
+void front_ios_home(void) {   // the Home pill
+    if (g_home) { LOG("front end: home (the game pauses)"); g_home(); return; }
+    void front_ios_confirm_exit(void); front_ios_confirm_exit();   // an NX Pocket without a home over the game: close it, after asking
+}
+void front_ios_exit_to_pocket(void) {
+    LOG("front end: exit to NX Pocket");
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (!save_sync_flush(10000)) LOG("front end: the save did not reach the cloud before exit; it goes at the next start");
+        Class ws = NSClassFromString(@"LSApplicationWorkspace"), cfg = NSClassFromString(@"_LSOpenConfiguration");
+        id<DmWorkspace> w = ws ? [(Class<DmWorkspace>)ws defaultWorkspace] : nil;
+        if (![w respondsToSelector:@selector(openApplicationWithBundleIdentifier:configuration:completionHandler:)]) { LOG("[RED] front end: cannot ask to be opened again; NX Pocket just ends"); exit(0); }
+        // Two requests, and the app ends as the first is answered: the system takes that one while the app still runs (nothing to do), and the second once it has ended,
+        // which starts it again at once (LiveContainer's LCSharedUtils launchToGuestApp). _exit: the host's threads and exit handlers would only delay it
+        static _Atomic int answered;
+        for (int i = 0; i < 2; i++)
+            [w openApplicationWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier configuration:cfg ? [cfg new] : nil completionHandler:^(BOOL ok, NSError *e) {
+                if (answered++) return;
+                LOG("front end: reopen request %s%s%s; ending", ok ? "accepted" : "refused", e ? ": " : "", e ? e.localizedDescription.UTF8String : "");
+                fflush(stderr); _exit(0);
+            }];
+        sleep(3);
+        LOG("[RED] front end: no answer to the reopen request; ending"); fflush(stderr); _exit(0);
+    });
+}
+void front_ios_confirm_exit(void) {
+    const char *u = getenv("DM_UI_LANG"), *l = getenv("DM_LANG");   // NX Pocket's Settings › Language first (DmGamepad.m hf_zh)
+    BOOL zh = u && *u ? !strncmp(u, "zh", 2) : [NSLocale.preferredLanguages.firstObject hasPrefix:@"zh"] || (l && !strncmp(l, "zh", 2));
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:zh ? @"退出游戏？" : @"Exit the game?"
+        message:zh ? @"游戏里还没存档的进度会丢失。退出后回到 NX Pocket 首页。" : @"Progress the game has not saved is lost. NX Pocket starts over on its home screen."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:zh ? @"取消" : @"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:zh ? @"退出" : @"Exit" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { (void)x; front_ios_exit_to_pocket(); }]];
+    UIViewController *vc = g_root; while (vc.presentedViewController) vc = vc.presentedViewController;
+    [vc presentViewController:a animated:YES completion:nil];
+}
+// DM_EXIT_AFTER=<seconds> / DM_HOME_AFTER=<seconds> (development): close the game, unasked, or press Home that long after the game starts (tests with no one at the phone)
+static void exit_after_env(void) {
+    const char *e = getenv("DM_EXIT_AFTER"), *h = getenv("DM_HOME_AFTER"); int s = e ? atoi(e) : 0, hs = h ? atoi(h) : 0;
+    if (s > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)s * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ front_ios_exit_to_pocket(); });
+    if (hs > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)hs * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ front_ios_home(); });
+}
+#endif
 
 void front_ios_focus_event(int ev) {
     if (!g_layer) return;

@@ -114,6 +114,10 @@ def build(out, letter_font):
         glyph('arrow_' + nm, [c], 1000, arrow(deg))
     glyph('stick', [0xE100], 1000, stick(None)); glyph('stickL', [0xE101, 0xE0C1], 1000, stick('L')); glyph('stickR', [0xE102, 0xE0C2], 1000, stick('R'))
 
+    # The stand-in has no original Nintendo symbol artwork. Give unsupported private-use symbols a visible replacement instead of a missing glyph: Maker 2 preloads U+E06B,
+    # CheckGlyphExist returns false for it, and its cache then dereferences NULL at main+0x243570 (3.0.3). Keep the real button shapes above; do not change the game's checks.
+    glyph('symbolUnavailable', [c for c in range(0xE000, 0xF900) if c not in cmap], 1000, round_btn('?'))
+
     order = ['.notdef'] + sorted(n for n in glyphs if n != '.notdef')
     fb = FontBuilder(EM, isTTF=True)
     fb.setupGlyphOrder(order); fb.setupCharacterMap(cmap); fb.setupGlyf(glyphs)

@@ -61,6 +61,17 @@ class ReadImage(unittest.TestCase):
         with romfs.open(self.virtual / 'data/game.zip', 'rb') as f, zipfile.ZipFile(f) as z:
             self.assertEqual(z.read('member'), b'archive member')
 
+    @unittest.skipUnless(shutil.which('zstd'), 'zstd is required')
+    def test_zstd_shader_input_from_image_and_folder(self):
+        with patch.dict(os.environ, DM_GAME='010020D01AD24000'):
+            import shader_split
+        raw = b'compressed shader container' * 100
+        compressed = subprocess.run(['zstd', '-q', '-c'], input=raw, capture_output=True, check=True).stdout
+        (self.src / 'data/model.zs').write_bytes(compressed)
+        romfs_image.pack(self.src, self.image)
+        self.assertEqual(shader_split.unzs(str(self.src / 'data/model.zs')), raw)
+        self.assertEqual(shader_split.unzs(str(self.virtual / 'data/model.zs')), raw)
+
     def test_build_scanners_discover_the_same_inputs_from_image_and_folder(self):
         import gl_shaders
         import vk_shaders

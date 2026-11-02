@@ -263,7 +263,9 @@ class Pak:
         off = r.take('<I' if v >> 31 & 1 else '<Q'); raw = r.take('<I' if v >> 30 & 1 else '<Q')
         size = r.take('<I' if v >> 29 & 1 else '<Q') if meth else raw
         cur, blocks = 53 + (4 + 16 * nblk if meth else 0), []
-        if nblk == 1 and not bsz: bsz = raw   # FINAL FANTASY RESONANCE's pak (UE 5.6) stores block size 0 for a file of one block
+        # a file of one block holds all its raw bytes in it, whatever the block size field says: FINAL FANTASY RESONANCE's pak (UE 5.6) stores 0, a UE 4.26.1 one the raw size rounded down to 2 KB
+        # rounded down to 2 KB (raw >> 11 in the 6 bits; 15,514 of its 27,939 one-block files are not a multiple of 2 KB)
+        if nblk == 1: bsz = raw
         if nblk == 1 and not enc: blocks = [(cur, size)]
         else:
             for _ in range(nblk): s = r.take('<I'); blocks.append((cur, s)); cur += (s + 15) & ~15 if enc else s

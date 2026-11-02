@@ -14,6 +14,8 @@ program_id	01006A800016E000
 name	Super Smash Bros. Ultimate
 ipa	SuperSmashBrosUltimate.ipa
 app_category	public.app-category.games
+# Full controls expose the right stick for attacks as well as the left stick and shoulder buttons.
+pad_layout	full
 
 # ---- Versions ----
 # only the merged 13.0.5 copy is extracted
@@ -26,6 +28,10 @@ shader_versions	v2031616
 modules	main subsdk0 sdk
 romfs_marker	data.arc
 zip_store	.arc:.metallib
+
+# ---- Local play ----
+# Local wireless over the LAN (hle_ldn.c, ldn_mitm's protocol) through the host's sockets (hle_sock.c): the launcher's Local play switch, on by default
+local_play	lan
 
 # ---- Memory ----
 # The NPDM declares 16 MB of system resource (virtual address memory) and main never sets a heap: a 5 GB block with a 4.375 GB alias region, where the game maps its memory itself

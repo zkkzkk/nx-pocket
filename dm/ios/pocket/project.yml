@@ -1,0 +1,88 @@
+# NX Pocket (xcodegen; dm/ios/tools/build_pocket.py runs it): one app for every game. It has the launcher (the home screen, the games' settings, Import game pack) and no game of
+# its own: Play loads the selected game pack's signed library (dm/ios/tools/build_pack.py) and starts it (PocketApp.swift). iOS loads only a library signed by the same team as the
+# app, so NX Pocket and the packs are signed by one team: the one in the profile NX Pocket was installed with (GameLibrary.swift AppSigning; NXPocketTeam in Info.plist
+# when it has none), against which the import checks a pack's team and a certificate's.
+name: NXPocket
+options:
+  deploymentTarget:
+    iOS: "26.0"
+targets:
+  NXPocket:
+    type: application
+    platform: iOS
+    sources:
+      - path: PocketApp.swift
+      - path: PackSigner.swift
+      - path: ../Sources/PackSign.c
+      - path: AppIcon.icon          # NX Pocket's icon (Icon Composer layers: background, upper screen, lower screen; a dark background for the dark appearance)
+        type: file
+        buildPhase: resources
+      - path: Logo.xcassets         # the logo beside the home screen's wordmark (LauncherHome.swift Wordmark), light and dark
+      - path: Localized             # InfoPlist.strings in English and Simplified Chinese: the permission prompts' words
+      - path: Certificates          # Apple's WWDR intermediates and roots (public): they complete a .p12's chain (PackSigner.swift)
+        type: folder
+        buildPhase: resources
+      - path: ../Sources/Launcher.swift
+      - path: ../Sources/LauncherHome.swift
+      - path: ../Sources/PocketStyle.swift
+      - path: ../Sources/LauncherRow.swift
+      - path: ../Sources/LauncherSettings.swift
+      - path: ../Sources/GameLibrary.swift
+      - path: ../Sources/PackArchive.swift
+      - path: ../Sources/PackFile.swift
+      - path: ../Sources/LauncherFold.m
+      - path: ../Sources/CloudSaves.m
+      - path: ../Sources/Halfold/hf_kit.c
+    info:
+      path: Gen/Info.plist
+      properties:
+        CFBundleDisplayName: NX Pocket
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: ${DM_POCKET_BUILD}   # the checkout's commit count (build_pocket.py): NX Pocket for Mac tells an older one on an iPhone by it
+        NXPocketCommit: ${DM_POCKET_COMMIT}   # the commit it was built from
+        NXPocketTeam: ${DM_TEAM_ID}           # the team it is built for: used only when the installed app has no provisioning profile (GameLibrary.swift AppSigning)
+        UILaunchStoryboardName: ""
+        UIFileSharingEnabled: true            # Documents/Games (packs dropped in from a Mac), Documents/Data/<title ID> (saves, log.txt, env.txt) in the Files app
+        LSSupportsOpeningDocumentsInPlace: true   # a pack opened from the Files app is used where it is (or copied, as the import dialog asks)
+        UTExportedTypeDeclarations:           # a game pack, one file (format 3, PackFile.swift): tapping one in the Files app or receiving one with AirDrop opens NX Pocket
+          - UTTypeIdentifier: org.nxnative.nxpack
+            UTTypeDescription: NX Pocket Game Pack
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [nxpack]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: NX Pocket Game Pack
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes: [org.nxnative.nxpack]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown]
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: false
+        LSApplicationCategoryType: public.app-category.games
+        LSSupportsGameMode: true
+        NSLocalNetworkUsageDescription: "Local play: find and join other devices on the same Wi-Fi."   # in Chinese: Localized/zh-Hans.lproj/InfoPlist.strings
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, zh-Hans]  # the system's own words (permission prompts) in the language chosen (AppleLanguages, LauncherRow.swift AppLanguage)
+        GCSupportsControllerUserInteraction: true
+        GCSupportedGameControllers:
+          - ProfileName: ExtendedGamepad
+        CADisableMinimumFrameDurationOnPhone: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: PocketSceneDelegate
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}
+      PRODUCT_NAME: NXPocket
+      DEVELOPMENT_TEAM: ${DM_TEAM_ID}
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: ${DM_POCKET_ENTITLEMENTS}   # NXPocket.entitlements (Increased Memory Limit) by default; empty when the team has no profile with it (build_pocket.py --no-memory-limit)
+      SWIFT_VERSION: "5.0"
+      SWIFT_OBJC_BRIDGING_HEADER: ../Sources/DmIOS-Bridging-Header.h
+      CLANG_ENABLE_OBJC_ARC: YES
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES   # runs on an Apple silicon Mac too (the packs' code is arm64 like the Mac's)

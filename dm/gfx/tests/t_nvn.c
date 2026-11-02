@@ -333,7 +333,7 @@ int main(void) {
         size_t at = P(nvnCommandBufferGetCommandMemoryUsed)(&c2);
         P(nvnCommandBufferBindTexture)(&c2, NVN_SHADER_STAGE_FRAGMENT, 3, (NVNtextureHandle)(0x1ff00000u | 1234));
         P(nvnCommandBufferEndRecording)(&c2);
-        EXPECT("single texture bind recording: 0x20 + END", 0x28, P(nvnCommandBufferGetCommandMemoryUsed)(&c2));
+        EXPECT("single texture bind recording: 0x18 + END", 0x20, P(nvnCommandBufferGetCommandMemoryUsed)(&c2));
         uint32_t patched = 0x1ff00000u | 1235; memcpy(m + at + 0x10, &patched, 4);
         memcpy(&rh, m, sizeof rh); p_bind_handles bt; const p_bind_handles *bh = bind_rec(rh.op, m + 8, &bt);
         EXPECT("the bind reads the handle patched at its start + 0x10: slot 3, texture 1235, sampler 511", 1, rh.op == OP_BIND_TEX1 && bh->n == 1 && bh->first == 3 && bh->stage == NVN_SHADER_STAGE_FRAGMENT && bh->h[0] == patched);
@@ -475,6 +475,54 @@ int main(void) {
         EXPECT("slotted lists replay whole after the next slot is recorded", 0, broken);
         EXPECT("lists of 56..504 bytes stay in their 512 (no host segment)", (504 - 56) / 8 + 1, jumps_fit);
         P(nvnCommandBufferFinalize)(&c3); P(nvnMemoryPoolFinalize)(&mp);
+    }
+    // A large grant may cover adjacent live slots: only the bytes actually recorded replace old commands.
+    // Super Mario Maker 2 and TotK grant max(measured slot size, 512), even for shorter slots.
+    {
+        static uint8_t m[4096] __attribute__((aligned(4096))), ub[128];
+        NVNmemoryPoolBuilder mb; NVNmemoryPool mp; NVNcommandBuffer a, b;
+        P(nvnMemoryPoolBuilderSetDefaults)(&mb); P(nvnMemoryPoolBuilderSetStorage)(&mb, m, sizeof m); P(nvnMemoryPoolInitialize)(&mp, &mb);
+        P(nvnCommandBufferInitialize)(&a, &dev); P(nvnCommandBufferInitialize)(&b, &dev);
+        P(nvnCommandBufferAddCommandMemory)(&a, &mp, 256, 64); P(nvnCommandBufferBeginRecording)(&a);
+        P(nvnCommandBufferBindUniformBuffer)(&a, NVN_SHADER_STAGE_FRAGMENT, 0, 0x30000, 0x100); // a real guest record anchors the JUMP
+        P(nvnCommandBufferUpdateUniformBuffer)(&a, 0x10000, 0x1000, 0, sizeof ub, ub);
+        const uint8_t *ha = (const uint8_t *)P(nvnCommandBufferEndRecording)(&a);
+        const uint8_t *host_a; memcpy(&host_a, ha + ((const op_hdr *)ha)->size + 8, 8);
+        uint8_t saved[256]; size_t saved_n = (size_t)(CB(&a)->cur - host_a);
+        EXPECT("overflow fixture fits the snapshot", 1, saved_n <= sizeof saved); memcpy(saved, host_a, saved_n);
+        int si = -1; for (int k = 0; k < g_nhostseg; k++) if (g_hostseg[k].mem == host_a) si = k;
+        EXPECT("overflow fixture has a host segment", 1, si >= 0);
+        P(nvnCommandBufferAddCommandMemory)(&b, &mp, 0, 512);
+        EXPECT("an unused overlapping grant retains a live segment", 1, si >= 0 && g_hostseg[si].busy);
+        P(nvnCommandBufferBeginRecording)(&b); P(nvnCommandBufferEndRecording)(&b);
+        EXPECT("writing before the live slot retains its segment", 1, si >= 0 && g_hostseg[si].busy);
+        P(nvnCommandBufferAddCommandMemory)(&b, &mp, 768, 64); P(nvnCommandBufferBeginRecording)(&b);
+        P(nvnCommandBufferUpdateUniformBuffer)(&b, 0x20000, 0x1000, 0, sizeof ub, ub); P(nvnCommandBufferEndRecording)(&b);
+        EXPECT("another overflow cannot reuse the adjacent live recording", 0, memcmp(saved, host_a, saved_n));
+        P(nvnCommandBufferAddCommandMemory)(&b, &mp, 256, 512); P(nvnCommandBufferBeginRecording)(&b); P(nvnCommandBufferEndRecording)(&b);
+        EXPECT("replacing the live slot releases its segment", 0, si >= 0 && g_hostseg[si].busy);
+        P(nvnCommandBufferFinalize)(&a); P(nvnCommandBufferFinalize)(&b); P(nvnMemoryPoolFinalize)(&mp);
+    }
+    // A new empty recording may start exactly at the end of the guest grant.
+    // Its END is entirely host-backed: writing the next guest slot cannot retire it.
+    {
+        static uint8_t m[4096] __attribute__((aligned(4096)));
+        NVNmemoryPoolBuilder mb; NVNmemoryPool mp; NVNcommandBuffer a, b;
+        P(nvnMemoryPoolBuilderSetDefaults)(&mb); P(nvnMemoryPoolBuilderSetStorage)(&mb, m, sizeof m); P(nvnMemoryPoolInitialize)(&mp, &mb);
+        P(nvnCommandBufferInitialize)(&a, &dev); P(nvnCommandBufferInitialize)(&b, &dev);
+        P(nvnCommandBufferAddCommandMemory)(&a, &mp, 0, 64);
+        for (int k = 0; k < 8; k++) { P(nvnCommandBufferBeginRecording)(&a); P(nvnCommandBufferEndRecording)(&a); }
+        P(nvnCommandBufferBeginRecording)(&a); const uint8_t *empty = (void *)P(nvnCommandBufferEndRecording)(&a);
+        int si = -1; for (int k = 0; k < g_nhostseg; k++) if (g_hostseg[k].mem == empty) si = k;
+        EXPECT("empty overflow recording has a host handle", 1, si >= 0);
+        P(nvnCommandBufferAddCommandMemory)(&b, &mp, 64, 64);
+        P(nvnCommandBufferBeginRecording)(&b); P(nvnCommandBufferEndRecording)(&b);
+        EXPECT("writing the next slot retains a wholly host-backed handle", 1, si >= 0 && g_hostseg[si].busy);
+        static uint8_t ub[1024];
+        P(nvnCommandBufferAddCommandMemory)(&b, &mp, 128, 64); P(nvnCommandBufferBeginRecording)(&b);
+        P(nvnCommandBufferUpdateUniformBuffer)(&b, 0x10000, 0x1000, 0, sizeof ub, ub); P(nvnCommandBufferEndRecording)(&b);
+        EXPECT("a wholly host-backed empty recording remains END", OP_END, ((const op_hdr *)empty)->op);
+        P(nvnCommandBufferFinalize)(&a); P(nvnCommandBufferFinalize)(&b); P(nvnMemoryPoolFinalize)(&mp);
     }
     // 5b''. Host segment sizes (hostseg_size), as Super Mario Odyssey grants 512 bytes from an empty pool before recording: such a grant gets a HOSTSEG_SMALL segment; a recording
     //       that outgrows it with no callback JUMPs into a full one and replays whole through its first handle; a record larger than HOSTSEG_SZ gets a segment that holds it;

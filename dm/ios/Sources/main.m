@@ -1,5 +1,7 @@
 // iOS App entry: set the environment (game files, saves, shader libraries), write the host log to Documents/log.txt, create the window (front_ios.m), then run the host's dm_main on a big-stack thread.
 // The game files (RomFS) ship inside the App at <App>/romfs; Documents/romfs.img (one image, scripts/push_romfs.sh; its name in any letter case) or a Documents/romfs folder is also accepted (lets you swap them without reinstalling). The DLC folder aoc/ likewise: Documents/aoc, else <App>/aoc.
+// Built as a game pack's library (DM_PACK, dm/ios/pack.yml) there is no main: NX Pocket (dm/ios/pocket) loads the library and calls dm_pack_start, with the pack's folder in place of the
+// app's resources and the game's own data folder in place of Documents.
 #import <UIKit/UIKit.h>
 #import <Metal/Metal.h>
 #include <pthread.h>
@@ -24,6 +26,9 @@ UIViewController *front_ios_root(void);
 void front_ios_focus_event(int ev);
 
 static char *g_argv[4]; static int g_argc;
+// Where the game's files are (the app's resources, or a game pack's folder) and its data goes (Documents, or NX Pocket's folder for the game); the packed language and frame-rate counter
+static NSString *g_res, *g_doc, *g_lang, *g_owner; static BOOL g_show_fps;
+BOOL front_ios_show_fps_default(void) { return g_show_fps; }   // front_ios.m: DM_SHOW_FPS overrides it
 
 // Documents/romfs.img, one RomFS image file (dm/tools/romfs_image.py, scripts/push_romfs.sh): only a complete one counts. Its index is written last and ends the file, so a copy cut off partway is skipped
 static int romfs_image_complete(NSString *path) {
@@ -37,7 +42,7 @@ static int romfs_image_complete(NSString *path) {
 // A build made with DM_COPY_ROMFS=NO carries <App>/romfs.id (dm/host/romfs_identity.h): only a Documents/romfs.img with that identity is used. No romfs.id (the default build): any complete image
 static int romfs_identity_accepts(NSString *img) {
     romfs_id want, got;
-    int rc = romfs_id_check([NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation, img.fileSystemRepresentation, &want, &got);
+    int rc = romfs_id_check([g_res stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation, img.fileSystemRepresentation, &want, &got);
     if (rc != ROMFS_ID_OK && rc != ROMFS_ID_NONE) fprintf(stderr, "[RED] boot: Documents/%s is not the image this build needs (verdict %d); not used\n", img.lastPathComponent.UTF8String, rc);
     return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
 }
@@ -55,7 +60,7 @@ static NSArray<NSString *> *romfs_document_images(NSString *doc) {
 }
 static NSString *romfs_locate(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSString *doc = g_doc;
     for (NSString *img in romfs_document_images(doc)) {
         if (!romfs_image_complete(img) || !romfs_identity_accepts(img)) continue;
         // A folder copy from before images is now dead weight of up to many GB (often cut off partway). Deleting its 300,000 files here took longer than iOS allows an app to start
@@ -69,11 +74,11 @@ static NSString *romfs_locate(void) {
         });
         return img;
     }
-    NSString *bundledImage = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.img"];
+    NSString *bundledImage = [g_res stringByAppendingPathComponent:@"romfs.img"];
     NSString *documentFolder = [doc stringByAppendingPathComponent:@"romfs"];
     if ([fm fileExistsAtPath:[documentFolder stringByAppendingPathComponent:@DM_GAME_ROMFS_MARKER]]) return documentFolder;
     if (romfs_image_complete(bundledImage)) return bundledImage;
-    for (NSString *d in @[[doc stringByAppendingPathComponent:@"romfs"], [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs"]])
+    for (NSString *d in @[[doc stringByAppendingPathComponent:@"romfs"], [g_res stringByAppendingPathComponent:@"romfs"]])
         if ([fm fileExistsAtPath:[d stringByAppendingPathComponent:@DM_GAME_ROMFS_MARKER]]) return d;   // only a directory containing the game profile's romfs_marker path counts (Mario: System/Resource, the resource size table)
     return nil;
 }
@@ -103,17 +108,16 @@ static char g_device_message[320];
 const char *front_ios_device_message(void) { return g_device_message[0] ? g_device_message : NULL; }
 static void romfs_identity_report(NSString *doc) {
     romfs_id want, got;
-    int rc = romfs_id_check([NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation,
+    int rc = romfs_id_check([g_res stringByAppendingPathComponent:@"romfs.id"].fileSystemRepresentation,
                             (romfs_document_images(doc).firstObject ?: [doc stringByAppendingPathComponent:@"romfs.img"]).fileSystemRepresentation, &want, &got);
     if (rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE) return;
-    romfs_id_message(rc, &want, &got, NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "<bundle ID>", g_boot_message, sizeof g_boot_message);
+    romfs_id_message(rc, &want, &got, g_owner.UTF8String ?: "<bundle ID>", g_boot_message, sizeof g_boot_message);
     fprintf(stderr, "[RED] boot: %s\n", g_boot_message);
 }
 
 static int boot_env(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
-    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-    NSString *res = NSBundle.mainBundle.resourcePath;
+    NSString *doc = g_doc, *res = g_res;
     for (NSString *d in @[@"save", @"temp"]) [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
     // Keep game files and scratch data out of device backups (Documents is backed up by default; a RomFS placed there is many GB). Saves, logs and the pipeline list stay in the backup
     for (NSString *d in [@[@"romfs", @"aoc", @"temp"] arrayByAddingObjectsFromArray:[romfs_document_images(doc) valueForKey:@"lastPathComponent"]]) {
@@ -154,9 +158,9 @@ static int boot_env(void) {
     setenv("DM_ENV_FILE_KEYS", [from_file componentsJoinedByString:@" "].UTF8String, 1);   // the launcher keeps what an env file set (LauncherSettings.swift)
     setenv("DM_ENV_LAUNCH_KEYS", [from_launch componentsJoinedByString:@" "].UTF8String, 1);   // and what the launch environment set (docs/frontends.md, Saved choices)
     front_hud_env();   // before the early loading below can make a device
-    // Game language (nn::oe::GetDesiredLanguage, hle_oe.c): the one the IPA was packed with (the NSP script's LANGUAGE / --language → DMLanguage in Info.plist), unless an env file sets DM_LANG
+    // Game language (nn::oe::GetDesiredLanguage, hle_oe.c): the one the IPA was packed with (the NSP script's LANGUAGE / --language → DMLanguage in Info.plist; a pack's pack.json), unless an env file sets DM_LANG
     // (or the launcher, which replaces this default before the game starts)
-    NSString *lang = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLanguage"];
+    NSString *lang = g_lang;
     if (!getenv("DM_LANG") && [lang isKindOfClass:NSString.class] && lang.length) setenv("DM_LANG", lang.UTF8String, 0);
     fprintf(stderr, "boot: game language %s\n", getenv("DM_LANG") ?: "en-US");
     id<MTLDevice> gpu = MTLCreateSystemDefaultDevice();   // the system default device, the one the graphics layers take (mtl_init repeats this check for the other routes)
@@ -165,7 +169,8 @@ static int boot_env(void) {
                  gpu ? gpu.name.UTF8String : "no Metal device");
         fprintf(stderr, "[RED] boot: %s\n", g_device_message); return 0;
     }
-    NSString *romfs = romfs_locate();
+    // A single-file pack (format 3): NX Pocket names the pack file and where its RomFS image ends in it (DM_ROMFS, DM_ROMFS_SIZE; hle_fs.c img_open)
+    NSString *romfs = getenv("DM_ROMFS_SIZE") && getenv("DM_ROMFS") ? @(getenv("DM_ROMFS")) : romfs_locate();
     if (!romfs) { romfs_identity_report(doc); fprintf(stderr, "boot: game files not found (Documents/romfs.img, Documents/romfs or <App>/romfs)\n"); return 0; }
     fprintf(stderr, "boot: game files %s\n", romfs.fileSystemRepresentation);
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
@@ -200,6 +205,7 @@ void front_ios_boot(void) {   // Called by front_ios.m once the window and Metal
 }
 int front_ios_boot_ok(void) { return g_boot_ok; }
 
+#if !DM_PACK   // a pack runs in NX Pocket's application and scene (dm/ios/pocket)
 @interface App : UIResponder <UIApplicationDelegate>
 @end
 @implementation App
@@ -225,6 +231,42 @@ int front_ios_boot_ok(void) { return g_boot_ok; }
 @end
 
 int main(int argc, char **argv) {
-    @autoreleasepool { g_boot_ok = boot_env(); }
+    @autoreleasepool {
+        g_res = NSBundle.mainBundle.resourcePath; g_doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+        id lang = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLanguage"]; g_lang = [lang isKindOfClass:NSString.class] ? lang : nil;
+        g_show_fps = [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMShowFPS"] boolValue]; g_owner = NSBundle.mainBundle.bundleIdentifier;
+        g_boot_ok = boot_env();
+    }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(App.class)); }
 }
+#else
+// NX Pocket's call once the player pressed Play on this pack (the launcher's settings are in the environment): pack = the pack's folder (pack.json, dm/, romfs.img, msl/, aoc/, pso/),
+// data = the game's own folder (save/, temp/, log.txt, env.txt), window = NX Pocket's window, which the game's view controller takes over. Returns 0 when the game files are missing
+// (the screen then says why, as in an app). The game runs until the app ends: a pack is loaded once per launch
+__attribute__((visibility("default"))) int dm_pack_start(const char *pack, const char *data, UIWindow *window) {
+    @autoreleasepool {
+        g_res = @(pack); g_doc = @(data); g_owner = @"NX Pocket";
+        NSDictionary *info = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[g_res stringByAppendingPathComponent:@"pack.json"]] ?: NSData.data options:0 error:nil];
+        if ([info isKindOfClass:NSDictionary.class]) {
+            id lang = info[@"language"]; g_lang = [lang isKindOfClass:NSString.class] ? lang : nil;
+            g_show_fps = [info[@"showFPS"] respondsToSelector:@selector(boolValue)] && [info[@"showFPS"] boolValue];
+        }
+        [NSFileManager.defaultManager createDirectoryAtPath:g_doc withIntermediateDirectories:YES attributes:nil error:nil];
+        g_boot_ok = boot_env();
+        fprintf(stderr, "boot: game pack %s, data %s\n", pack, data);
+        window.rootViewController = front_ios_root();   // the game's root view controller (front_ios.m): it starts the game once its view is on screen
+    }
+    return g_boot_ok;
+}
+// The scene's focus events, which NX Pocket's scene delegate passes on once the pack is loaded (the app's SceneDelegate does it above)
+__attribute__((visibility("default"))) void dm_pack_focus_event(int ev) { front_ios_focus_event(ev); }
+// NX Pocket's home screen over the game (the Home pill, front_ios.m): on = paused as on going to the background (input reset, focus lost, audio and the guest clock
+// stopped, no presents, the cloud save sent), off = carrying on as on coming back
+__attribute__((visibility("default"))) void dm_pack_suspend(int on) {
+    if (on) { front_ios_focus_event(0); front_ios_focus_event(1); } else { front_ios_focus_event(2); front_ios_focus_event(3); }
+}
+// What the Home pill calls: NX Pocket shows its home screen (and calls dm_pack_suspend)
+__attribute__((visibility("default"))) void dm_pack_on_home(void (*show_home)(void)) { void front_ios_set_home(void (*)(void)); front_ios_set_home(show_home); }
+// Closing the game: the cloud save goes out and NX Pocket starts over on its home screen (front_ios.m)
+__attribute__((visibility("default"))) void dm_pack_close(void) { void front_ios_exit_to_pocket(void); front_ios_exit_to_pocket(); }
+#endif

@@ -257,6 +257,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Check:** `t_stencil_view` writes both planes, reads through an IMAGE stencil descriptor and copies to separate storage under Metal validation; `t_upgrade_alias` checks image-write preparation and every live/finalized alias.
 - **Found on:** [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md).
 
+### sRGB and linear texture objects on one storage
+
+- **Symptom:** a frame draws only the HUD on black, while the tone-mapped picture is in an off-screen target (`DM_CTL texdump`).
+- **Cause:** the game draws into an RGBA8_SRGB texture and reads it back through an RGBA8 object on the same pool offset. Textures shared by storage were keyed by the whole description, format included, so the second object made a Metal texture of its own that nothing wrote.
+- **Fix:** the storage key takes an sRGB format's linear twin (`fmt_linear` in `nvn_mtl.m`); an object of the other format gets a view of the shared texture in its own format.
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md) (every match and the Adventure map).
+
 ### Shared-storage entries taken over by a new texture
 
 - **Symptom:** GPU memory grows with every image shown; the memory line's `shared textures` count keeps rising.

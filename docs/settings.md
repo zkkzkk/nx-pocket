@@ -1,10 +1,11 @@
 # Settings
 
-The screen before the game starts shows the settings the game supports. A setting that only matters while another is on appears under it and disappears when that one is turned off. Tap **Play** to start; the app remembers your choices for the next start. All settings are on one scrollable screen, under **Game**, **Controls** and **Performance**. Tap a menu or move a slider there; no settings page needs opening. **Upscaling** is in **Game**, beside **Console mode**. A Mac app shows the same settings in a [window of its own](#the-mac-settings-window).
+The screen before the game starts shows the settings the game supports. A setting that only matters while another is on appears under it and disappears when that one is turned off. Tap **Play** to start; the app remembers your choices for the next start. All settings are on one scrollable screen, under **Game**, **Local play** (games that have it), **Controls** and **Performance**. Tap a menu or move a slider there; no settings page needs opening. **Upscaling** is in **Game**, beside **Console mode**. A Mac app shows the same settings in a [window of its own](#the-mac-settings-window).
 
 - [Tested defaults](#tested-defaults)
-- [Game](#game): [Frame rate](#frame-rate), [Render scale](#render-scale), [Console mode](#console-mode), [Upscaling](#upscaling), [Game language](#game-language), [Frame-rate counter](#frame-rate-counter)
-- [Controls](#controls): [Touch feedback](#touch-feedback), [Game rumble](#game-rumble), [Rumble strength](#rumble-strength), [Rumble cutoff](#rumble-cutoff)
+- [Game](#game): [Frame rate](#frame-rate), [Render scale](#render-scale), [Console mode](#console-mode), [Upscaling](#upscaling), [Screen fill](#screen-fill), [Game language](#game-language), [Frame-rate counter](#frame-rate-counter)
+- [Local play](#local-play): [Local wireless over Wi-Fi](#local-wireless-over-wi-fi), [Other devices' addresses](#other-devices-addresses), [Player name](#player-name)
+- [Controls](#controls): [Touch feedback](#touch-feedback), [Touch feedback strength](#touch-feedback-strength), [D-pad diagonals](#d-pad-diagonals), [Left stick](#left-stick), [Left-stick dead zone](#left-stick-dead-zone), [Swipe camera](#swipe-camera), [Camera touch area](#camera-touch-area), [A/B buttons](#ab-buttons), [Game rumble](#game-rumble), [Rumble strength](#rumble-strength), [Rumble cutoff](#rumble-cutoff)
 - [Performance](#performance): [Frame buffering](#frame-buffering), [Metal 4 pipelines](#metal-4-pipelines), [Pipeline prebuild](#pipeline-prebuild), [Encode thread](#encode-thread), [Hold frames when late](#hold-frames-when-late), [Performance HUD](#performance-hud), [Reset to tested defaults](#reset-to-tested-defaults)
 - [The Mac settings window](#the-mac-settings-window): [Display mode](#display-mode)
 - [TV](#tv)
@@ -51,6 +52,10 @@ Breath of the Wild renders 1280x720 in handheld mode. Docked it renders its worl
 - **Cost:** more GPU time each frame, which can increase heat on an iPhone. [Breath of the Wild's measurements](../dm/games/01007EF00011E000/README.md#upscaling-current) cover Mac and iPhone; the matching iPhone Standard run and MetalFX's share of the thermal cost remain unmeasured. Nothing changes while the game's picture is as large as the screen. Unsupported devices and sizes use Standard scaling.
 - **On the Mac:** choose **MetalFX** under **Upscaling** in the [settings window](#the-mac-settings-window)'s Advanced settings, or set `DM_PRESENT_UPSCALE=metalfx` in its `env.txt` (off by default). It helps in a large window or on a 4K screen.
 
+### Screen fill
+
+How the picture fills a screen whose shape is not the game's 16:9. **Fit**, the default, keeps the shape and leaves black bars; **Stretch** fills the screen and distorts the picture; **Crop** fills it without distortion and cuts off what overflows on both sides, which can hide things the game shows at its edges. A foldable phone held in portrait (Halfold) uses the same setting for the picture above the controls.
+
 ### Game language
 
 The game's own languages. The app was packed with one of them; pick another here without repacking.
@@ -59,11 +64,55 @@ The game's own languages. The app was packed with one of them; pick another here
 
 Shows the frames per second at the top left.
 
+## Local play
+
+Games whose own **local wireless** mode can run over Wi-Fi show this section (Super Smash Bros. Ultimate). Phones, iPads and Macs on the same Wi-Fi then find each other's rooms and play together, as Switch consoles do over local wireless; a Switch running ldn_mitm can join too. Every device needs the same app build (game version and DLC). The first time the game looks for rooms, iOS asks to allow the local network: allow it. Under the section the screen shows **this device's address**, for the box below.
+
+### Local wireless over Wi-Fi
+
+On by default. Off, local wireless finds no one, as before.
+
+### Other devices' addresses
+
+Usually empty. An iPhone cannot broadcast, so it looks for rooms at every address of its Wi-Fi instead; on a network larger than that, or when a room does not show, type the other devices' IP addresses here, separated by commas (each device shows its own under the section). A router with "AP isolation" or a guest network keeps devices apart whatever is typed here.
+
+### Player name
+
+Your name in the room. Each device should have its own; empty, the game shows "Player".
+
 ## Controls
 
 ### Touch feedback
 
 A light tap from the phone when you press an on-screen button.
+
+### Touch feedback strength
+
+How strong the touch feedback is, from a faint tap to a firm one. **Touch feedback** itself can also tap again, more softly, when a key is let go (**On press and release**).
+
+### D-pad diagonals
+
+How wide the on-screen D-pad's diagonals are: the middle (45°) is the default; all the way down the D-pad has only four directions, which suits games where a diagonal gets in the way.
+
+### Left stick
+
+**Fixed**, the default, keeps the left stick's ring where it is drawn. **Anywhere on the left** centres the stick where your thumb lands on the left half of the controls, and drags it along if your thumb goes past its edge; a foldable phone in portrait uses the left half of the controls below the picture.
+
+### Left-stick dead zone
+
+How far the left stick must move before the game sees it (10 % of the ring by default); raise it if a character creeps while your thumb rests on the stick.
+
+### Swipe camera
+
+In the 3D layout, the camera normally turns with an invisible right stick that centres where your finger lands. **Swipe camera** turns it by how fast your finger moves instead, as in most phone games; holding still stops the camera. **Swipe sensitivity** scales it (25–400 %); the game still limits how fast its camera turns.
+
+### Camera touch area
+
+Where a touch starts the camera, in both modes: the right third of the controls (the default) or the right half. Buttons there keep priority.
+
+### A/B buttons
+
+**Nintendo** keeps the Switch's face buttons: A on the right and B at the bottom. **Xbox / PlayStation** swaps A and B, so A (Cross) is at the bottom and B (Circle) on the right, where Xbox and PlayStation controllers print them. The choice applies to the on-screen gamepad and to connected controllers; X and Y stay where they are. **Nintendo** is the default.
 
 ### Game rumble
 
@@ -225,6 +274,7 @@ A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under 
 | Cloud saves folder (Mac) | `DM_SAVE_SYNC` | a folder; `icloud`: iCloud Drive › nxnative Saves; `0`: off |
 | Frame-rate counter | `DM_SHOW_FPS` | `1`, `0` |
 | Touch feedback | `DM_TOUCH_HAPTICS` | `1`, `0` |
+| A/B buttons | `DM_PAD_AB` | `nintendo`, `xbox` |
 | Game rumble | `DM_RUMBLE` | `1`, `0` |
 | Rumble strength | `DM_RUMBLE_GAIN` | `0` to `3` |
 | Rumble cutoff | `DM_RUMBLE_MIN` | `0` to `0.9` |

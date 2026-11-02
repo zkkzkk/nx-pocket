@@ -17,4 +17,5 @@ uint64_t now_ns(void) { static mach_timebase_info_data_t tb; if (!tb.denom) mach
 uint64_t guest_ns(void) { return now_ns(); }
 int dm_detclock_enabled(void) { return 0; }
 __thread _Atomic int dm_host_work;   // referenced by hle_thread.c; in the host it is defined in hle_nvn.c
+void (*dm_host_block_hook)(int);   // defined by the graphics host in a full build (core_lock)
 pthread_key_t g_key18;   // read by hle_thread.c's SVC entry and pause signal; in the host it is defined in loader.c (never created here: those paths do not run)

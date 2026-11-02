@@ -11,7 +11,7 @@ struct Setting: Decodable, Identifiable {
     struct Base: Decodable { let docked, handheld: [Int] }
     let options: [[String]]?   // choice: [value, label]
     let min, max, step: Double?   // range
-    let on, off: String?   // toggle: the values the variable takes (1 / 0 when not given)
+    let on, off: String?   // toggle: the values the variable takes (1 / 0 when not given); text: a line the player types, none of these
     var id: String { env }
     var sectionTitle: String { section ?? "Game" }
     var basic: Bool { level == "basic" }
@@ -32,7 +32,7 @@ struct Setting: Decodable, Identifiable {
     }
     enum CodingKeys: String, CodingKey { case env, kind, label, note, def = "default", section, needs, level, base, options, min, max, step, on, off }
 }
-struct SettingsFile: Decodable { let settings: [Setting] }
+struct SettingsFile: Decodable { let game: String?; let settings: [Setting] }   // game: the base game's title ID (absent in older bundles)
 
 final class LauncherModel: ObservableObject {
     let settings: [Setting]
@@ -100,7 +100,8 @@ final class LauncherModel: ObservableObject {
             let v = values[s.env] ?? s.def
             if fixed.contains(s.env) { fputs("launcher: \(s.env) kept at \(v) (\(fromLaunch.contains(s.env) ? "launch environment" : "env file"))\n", stderr); continue }
             if !ignoreSaved { if s.isDefault(v) { defaults.removeObject(forKey: "launcher." + s.env) } else { defaults.set(v, forKey: "launcher." + s.env) } }
-            setenv(s.env, v, 1); fputs("launcher: \(s.env)=\(v)\(s.isDefault(v) ? "" : " (changed)")\n", stderr)
+            if s.kind == "text" && v.trimmingCharacters(in: .whitespaces).isEmpty { unsetenv(s.env); fputs("launcher: \(s.env) not set\n", stderr); continue }   // an empty line leaves the host's own default
+            setenv(s.env, v.trimmingCharacters(in: .whitespaces), 1); fputs("launcher: \(s.env)=\(v)\(s.isDefault(v) ? "" : " (changed)")\n", stderr)
         }
     }
 

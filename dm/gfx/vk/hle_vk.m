@@ -22,6 +22,7 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#include "../../host/dm_image.h"
 #include <math.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -1536,7 +1537,7 @@ VKB(vkQueuePresentKHR, VkResult, VkQueue q, const VkPresentInfoKHR *pi) {
 static void *vk_lookup(const char *name) {
     static const hle_ent *sec; static unsigned long sz;
     if (!name || strncmp(name, "vk", 2)) return NULL;
-    if (!sec) sec = (const hle_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swhle", &sz);
+    if (!sec) sec = (const hle_ent *)getsectiondata(DM_IMAGE, "__DATA", "swhle", &sz);
     void *fn = NULL; size_t n = strlen(name);
     for (int pass = 0; pass < 2 && !fn; pass++) {
         size_t len = pass ? n - 3 : n;

@@ -51,6 +51,16 @@ class Nesting(unittest.TestCase):
         out, _ = self.scan(outer)
         self.assertEqual({w.split('#')[0] for w, *_ in out}, {'/UI/EUde/race.sarc/rc_L_Rank_00.szs/shader.bnsh'})
 
+    def test_archive_in_compressed_member_is_not_overlap(self):
+        # Super Mario Maker 2's Pack/Layout*.pack shape: Yaz0 layouts that expand about 12 times, each holding one .arc archive whose members are as large again;
+        # counting every level of nesting added up to about 25 times the file
+        arc = fz.sarc([(b'shader.bnsh', fz.bnsh())] + [(b'timg%d.bntx' % i, bytes(0x4000)) for i in range(8)])
+        packed = yaz0(fz.sarc([(b'Lyt.arc', arc)]))
+        outer = fz.sarc([(b'Lyt.szs', packed), (b'pad.bin', b'\1' * (len(arc) // 12 - len(packed)))])
+        self.assertTrue(11 * len(outer) < len(arc) < 13 * len(outer))
+        out, _ = self.scan(outer)
+        self.assertEqual({w.split('#')[0] for w, *_ in out}, {'/UI/EUde/race.sarc/Lyt.szs/Lyt.arc/shader.bnsh'})
+
     def test_overlapping_members_are_stopped(self):
         d = (REPO / 'dm/tools/fuzz/corpus/shader_split/sarc-fanout.bin').read_bytes()
         with self.assertRaisesRegex(SystemExit, r'members add up to more than 16 times the file \(members that overlap\)'): self.scan(d)

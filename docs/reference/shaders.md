@@ -33,6 +33,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** two budgets, each 16 times the file. The first counts each member by what it takes up in its archive, so it still stops members that overlap. The second counts what Yaz0 members expand to, charged from the Yaz0 header before the member is decoded. Each bound stays what it was, so the work is still within a small multiple of 16 times the file. Charging only the stored size, with no second budget, would have let the work grow by the Yaz0 ratio (about 90 at most) as well. `test_split_nesting.py` covers the layout archive's shape, the fan-out corpus input, a compressed fan-out (stopped after 19 scans; 8^6 without the bounds) and a Yaz0 member that expands 87 times, stopped before it is decoded.
 - **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (GitHub issue #640): its race and result layout archives (`UI/<lang>/race.sarc`, `tv.sarc`, `UI/cmn/tv_result.sarc`), 14 files in 4.0.0 and 28 with 4.0.1.
 
+### An archive inside a compressed member is not overlap
+
+- **Symptom:** after the Yaz0 fix above, the split still leaves out layout archives whose members do not overlap: `[RED] /Pack/LayoutLesson.pack/Layout/Lsn_TitleBtn_01.Nin_NX_NVN.szs/Lsn_TitleBtn_01.arc: the archive members add up to more than 16 times the file (members that overlap)`, six files of one game, and the build stops there.
+- **Cause:** the first budget counted every member at every level of nesting. A Yaz0 layout that holds one `.arc` archive paid for the `.arc` (its whole decoded size) and then for the `.arc`'s members (the same bytes again). Packs of such layouts, expanding 9 to 13 times, added up to 19 to 25 times the file. Zstd members, read since the entry below, were not charged to the second budget at all.
+- **Fix (resolved):** opening an archive (SARC, PlatinumGames' DAT) gives back what the archive itself took from the first budget, so that budget counts what its members add: overlap, and what compressed members expand to. Members that overlap still add their extra bytes at every level and are stopped as before. A zstd member is charged to the second budget by what it expands to, like a Yaz0 member. `test_split_nesting.test_archive_in_compressed_member_is_not_overlap` builds the layout pack's shape (fails before the fix); the fan-out and Yaz0 bomb tests still stop.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md), 3.0.3: `Pack/Layout{Lesson,Local,MyWorld,Network,Play,Quest}.pack`, on the first build after the merge onto upstream's budgets.
+
 ### BNSH in NintendoWare archives and in main
 
 - BNSH (`BNSH\0\0\0\0` + `grsc` block at +0x60) is found inside `bfsha`, particle effects (`esetb`, VFXB), UI layouts (`blarc`), and `main` itself.
@@ -57,12 +64,35 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** it now goes by the zstd magic (`28 b5 2f fd`) whatever the name.
 - **Found on:** [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md) (8,726 of the RomFS's 9,959 files, the shader archives among them). Of the other 21 games' RomFS on hand only Super Mario Galaxy's `GDDR3.zst` (a Vulkan game, no NVN split) has such a file.
 
+### Zstd shader files inside a RomFS image
+
+- **Symptom:** the split reports every compressed model file as unreadable with `CalledProcessError`; the external `zstd` command receives a path such as `RomFS.img/Model/example.zs`. Super Mario Maker 2 lost 2,570 shaders this way.
+- **Cause:** `unzs` read the entry through the RomFS reader, then passed its virtual path to the external decompressor. Only the Python reader understands paths inside an image.
+- **Fix (resolved):** feed the already-read compressed bytes to `zstd` on standard input. Dictionary-backed frames keep their existing decoder. The folder and image now use the same decompression path.
+- **Check:** `test_romfs_read.ReadImage.test_zstd_shader_input_from_image_and_folder` fails on the old code and checks the decoded bytes from both storage forms. The game's full split reads all 429 model files without a red line and yields 6,641 shaders instead of 4,071.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md), update 3.0.3.
+
+### Zstd members inside SARC archives
+
+- **Symptom:** the title logo draws, but model programs report keys missing from the shader map. Scanning loose compressed model files alone does not find the missing variants.
+- **Cause:** SARC archives can contain zstd-compressed members, themselves containing archives and BNSH programs. Only top-level files and Yaz0 members were decompressed. The fast file filter also skipped SARC archives with no shader or Yaz0 magic visible in their compressed bytes.
+- **Fix (resolved):** always traverse SARC members, and decode zstd by its magic at every `scan_blob` boundary, using the existing dictionary support. Control sections and code bytes retain their original keys.
+- **Check:** `test_size_prefixed_frames.Unsized.test_zstd_shader_member_inside_sarc` fails before the fix. It passes an actual SARC with a compressed BNSH member through the file scanner and checks that the reader receives its decoded bytes and archive path.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md), update 3.0.3.
+
 ### HAL's `.cmp` containers: a size-prefixed frame
 
 - **Symptom:** the game asks for shaders the map does not have (`[RED] shader ... is not in the shader map`, hundreds of lines), and the split finds far fewer shaders than the game uses (121 against 27,288 on Kirby and the Forgotten Land).
 - **Cause:** HAL keeps its assets in `.cmp` containers: a 4-byte little-endian uncompressed size, then a frame (zstd, or LZ4 in the `ubin/` map data). The split decompressed a zstd file by its magic at offset 0, so a frame that starts at offset 4 was read raw, and the shaders inside the BFRES archives of those containers were never seen.
 - **Fix:** the split opens a size-prefixed frame as well (`unsized`: zstd, with a dictionary as for a plain zstd file, or LZ4) when the file's bytes 4 to 8 are a frame magic and bytes 0 to 4 are not the zstd magic. A frame whose header records a size other than the prefix is not such a container, and the file is read as it is: Tears of the Kingdom's 1,202 `Cave/…/C.crbin.<hash>/*.quad` files are a 4-byte hash (the one in their folder name) and a zstd frame, the only files with a frame at +4 in the RomFS of 39 other games on hand. A frame that records no size must decompress to exactly the prefix's size; otherwise (it does not decompress, it holds more or less, or it names a dictionary `Pack/ZsDic.pack.zs` does not have) the split prints a `[RED]` line and reads the file as it is.
 - **Found on:** [Kirby and the Forgotten Land](../../dm/games/01004D300C5AE000/README.md): 7,201 `.cmp` files, 5,121 of them zstd frames with 19,364 BNSH inside (11.2 GB decompressed) and 2,080 LZ4 frames, all of the latter in `ubin/` (0.3 GB, and no BNSH); the same layout is in 430 `.cmpbin` files (76 zstd in `lyt/`, 354 LZ4 in `snd/`). Every zstd frame records its size, the same as its prefix; no LZ4 frame does, and each decompresses to its prefix's size. The split now finds 27,288 shaders in the base game (18,476 in `gfx/`, 8,313 in `ptcl/`, 378 in `lyt/`, 67 in the loose `shader` files, 54 in `main`), against 121 before, and 27,302 with update 1.1.0 (v65536: 14 more in `lyt/`).
+
+### Camelot's NARC archives and their packed members
+
+- **Symptom:** the split finds 1,388 shaders, the game asks for many more (`[RED] shader ... is not in the shader map`), and the Adventure map and every court draw only the HUD.
+- **Cause:** Camelot keeps its models, textures and effects in NARC archives (`.narc`, `.ntex`, `.nptl` and some `.bin`; the Nitro layout: magic `NARC`, BOM `fe ff`, sections BTAF, BTNF and GMIF) whose members are packed by their first byte, as the game unpacks them (`main+0x20c284`): 0x10 / 0x20 / 0x70 zlib and 0x30 raw deflate after a 16-byte header, 0x50 / 0x60 Camelot's LZ (`main+0x20b3b8`: a flag byte read negated from its top bit, 0 a literal and 1 a reference of a 12-bit distance and a 4-bit length with one- or two-byte extensions; size big-endian at +4 for 0x50, in bytes 1-3 for 0x60), 0x80 stored, 0x94 an LZ4 block (size at +4). The split neither opened the archive nor saw the BNSH inside a packed member.
+- **Fix:** `narc_members` / `narc_member` / `camelot_lz` in `shader_split.py`; a NARC passes the split's prefilter, and its members are budgeted by what they decode to (a 2 MB texture of one colour packs to a few KB).
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md): 2,262 NARC files, 21,703 shaders (from 1,388).
 
 ### BNSH in Bezel Engine archives
 
@@ -389,6 +419,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **How it is stored:** a version 11 pak (Zlib blocks, index not encrypted) with no `.ushaderbytecode`: the project turned `bShareMaterialShaderCode` off, so each material keeps its shaders in its own `.uexp` and the engine's global shaders are in `Engine/GlobalShaderCache-SF_GLSL_SWITCH.bin`, as in [Unreal Engine 4.18](#unreal-engine-418-shaders-inline-in-cooked-packages). Unreal 4.27 serializes each one as an entry of `FShaderMapResourceCode`: the code (`i32` length, then an LZ4 block, the engine's shader compression since 4.26), the raw size (`i32`) and the frequency (`u8`).
 - **Reader:** `uepak.py` `inline_shaders` tells such a pak from one with archives by its directory index (cooked packages and no `.ushaderbytecode`; an encrypted index is taken for one with archives), and `shader_split.py` `ue_legacy_jobs` reads it file by file, Zlib and LZ4 blocks decoded in Python (`Pak.read`), so no host runs. `ue_inline_shaders` finds each LZ4 block by its first literals, the record's `LSLG`, with the token and literal length bytes in front of it, and takes it when it decodes to exactly the raw size after the block.
 - **Found on:** [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md): 13,980 unique shaders (1,910 vertex, 11,346 pixel, 694 compute, 30 geometry) from the 3.3 GB pak in 13 s.
+
+### Unreal pak files of one block
+
+- **Symptom:** the shader split reads no file of an Unreal pak: `[RED] … : ValueError: …pakchunk0-Switch.pak: Engine/Config/BaseCompat.ini block 0 does not decode (the stream does not end within its 0x3800 raw bytes)` for Zlib files, and `[game] OODLE ERROR : LZ corruption : OodleLZ_Decompress failed (0 != 2048)` from the game's decoder in the Mac host for Oodle files (`DM_OODLE_SERVE`), then `the shader split found no shaders in main or the RomFS`.
+- **Cause:** a version 11 pak entry packs its compression block size into 6 bits as size >> 11 (0x3f: a `u32` follows). For a file of one block the block holds the whole file, and this pak stores the raw size rounded down to 2 KB there (`Gameface.uproject`: 6,344 bytes, block size 6,144), so `Pak.read` asked each decoder for too few bytes. 15,514 of the pak's 27,939 one-block files are not a multiple of 2 KB; its 5,953 files of several blocks all have 64 KB blocks.
+- **Fix:** `uepak.py` `Pak.entry` takes a one-block file's block size as its raw size, whatever the field says (which also covers [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md)'s block size 0, the rule's first form).
+- **Found on:** an Unreal Engine 4.26.1 game outside the games table: `pakchunk0-Switch.pak`, Oodle and Zlib blocks; its shaders are inline in the cooked packages, as in [Unreal Engine 4.27](#unreal-engine-427-shaders-inline-in-cooked-packages-lz4).
 
 ### Unreal Engine 3 shader caches (Oodle packages)
 

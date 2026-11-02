@@ -9,6 +9,12 @@
 // Add-on content: nx_extract <prod.keys> --aoc <DLC NSP> <output dir> writes the RomFS of the DLC's data NCA to <output dir> (the packing script puts it at aoc/<index>/, the host mounts it through DM_AOC_DIR).
 // Title ID of a package: nx_extract <prod.keys> --title <NSP, NSZ, XCI or XCZ> prints "title <16 hex digits>", the lowest title ID of the package's meta NCAs (the base game's, before its update's or a DLC's),
 //   read from the meta NCA's header with the keys' header_key. For a package without a ticket and without a [title ID] in its name (the NSP script's title_of); exit code 5 when it has no meta NCA.
+// Control data alone: nx_extract <prod.keys> --control <base package> <update package or -> <output dir> writes control.nacp and icon.jpg (as an extraction does) and nothing else:
+//   the game's name, version and icon before anything is built (NX Pocket for Mac shows them on adding a game). The update's control data first, else the base game's; an NSZ's
+//   control NCA is stored uncompressed. Exit code 6 when neither has control data.
+// NX_EXTRACT_CHUNK_SUMS=1 (or a chunk size in bytes; NX Pocket for Mac sets it): the RomFS image's SHA-256 of every 64 MiB, worked out as the image is written, into
+//   <image>.chunks.json beside it (keyed by the image's size and modification time), so a single-file game pack made of it (dm/ios/tools/build_pack.py) need not read the
+//   image again for them. Chunk 0, whose header is written last, is read back from the file; a write elsewhere than at the end (a damaged file written again) gives up.
 // Title keys come from the common tickets (.tik) inside the NSPs, so only prod.keys is needed; key values are never printed.
 // The base game may also be a cartridge dump (.xci, Monster Hunter Rise): its secure partition holds the NCAs, which carry their keys in the key area (no ticket).
 //   When the cartridge also carries an update (1G+1U), only the base game's NCAs (those its Application content meta lists) are read; the update comes from the update NSP.
@@ -16,6 +22,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using LibHac.Common;
 using LibHac.Common.Keys;
 using LibHac.Fs;
@@ -38,6 +45,7 @@ static class P {
         bool image = Array.IndexOf(a, "--romfs-image") >= 0; a = Array.FindAll(a, s => s != "--romfs-image");
         g_allow = Array.IndexOf(a, "--allow-damaged") >= 0; a = Array.FindAll(a, s => s != "--allow-damaged");
         if (a.Length == 3 && a[1] == "--title") return Title(ExternalKeyReader.ReadKeyFile(a[0]), a[2]);
+        if (a.Length == 5 && a[1] == "--control") return Control(ExternalKeyReader.ReadKeyFile(a[0]), a[2], a[3], a[4]);
         if (a.Length < 4) { Console.Error.WriteLine("usage: nx_extract <prod.keys> <base.nsp> <update.nsp|-> <out dir> [base RomFS dir] [--romfs-image|--manifest] [--allow-damaged]\n       nx_extract <prod.keys> --aoc <dlc.nsp> <out dir or image> [--romfs-image]\n       nx_extract <prod.keys> --title <nsp|nsz|xci|xcz>"); return 2; }
         KeySet ks = ExternalKeyReader.ReadKeyFile(a[0]);
         if (a[1] == "--aoc") return Aoc(ks, a[2], a[3], image);
@@ -171,6 +179,23 @@ static class P {
     }
     // A multi-program application has a Program and a Control NCA per program index (ROMANCE OF THE THREE KINGDOMS 8 REMAKE: its update 1.1.3 adds a whole second program,
     // title ID …0001, beside the game's patch, …0000): with no title ID the lowest one (program index 0, the game), else the NCA of that title ID
+    static int Control(KeySet ks, string basePath, string updPath, string outDir) {
+        Nca ctrl = null;
+        foreach (string p in new[] { updPath, basePath }) {
+            if (p == "-" || ctrl != null) continue;
+            try { ctrl = Pick(OpenNsp(ks, p), NcaContentType.Control); }
+            catch (Exception e) { Console.WriteLine($"no control data read from {Path.GetFileName(p)}: {e.Message}"); }
+        }
+        if (ctrl == null) { Console.WriteLine("no control data"); return 6; }
+        byte[] nacp = Nacp(ctrl);
+        Directory.CreateDirectory(outDir); File.WriteAllBytes(Path.Combine(outDir, "control.nacp"), nacp);
+        Console.WriteLine($"display version {System.Text.Encoding.ASCII.GetString(nacp, 0x3060, 0x10).TrimEnd('\0')}");
+        Console.WriteLine($"name {TitleName(nacp)}");
+        var (icon, lang) = Icon(ctrl);
+        if (icon != null) { File.WriteAllBytes(Path.Combine(outDir, "icon.jpg"), icon); Console.WriteLine($"icon {lang} ({icon.Length} bytes)"); }
+        return 0;
+    }
+
     static Nca Pick(List<Nca> l, NcaContentType t, ulong? id = null) {
         Nca r = null;
         foreach (Nca n in l) if (n.Header.ContentType == t && (id == null ? r == null || n.Header.TitleId < r.Header.TitleId : n.Header.TitleId == id)) r = n;
@@ -242,7 +267,10 @@ static class P {
         Directory.CreateDirectory(Path.GetDirectoryName(dst));
         string part = dst + ".part"; long files = 0, bytes = 0; int damaged = g_damaged.Count;
         try {
-            using (var output = File.Create(part)) using (var writer = new BinaryWriter(output)) {
+            string want = Environment.GetEnvironmentVariable("NX_EXTRACT_CHUNK_SUMS");
+            long chunk = want == null ? 0 : long.TryParse(want, out long c) && c > 1 ? c : 64L << 20;
+            ChunkHashStream sums = null;
+            using (var file = File.Create(part)) using (var output = chunk > 0 ? (sums = new ChunkHashStream(file, chunk)) : (Stream)file) using (var writer = new BinaryWriter(output)) {
                 writer.Write(new byte[32]); byte[] buffer = new byte[4 << 20];
                 foreach (var e in entries) {
                     if (e.Directory) continue;
@@ -275,8 +303,47 @@ static class P {
             if (g_damaged.Count != damaged && !g_allow) { File.Delete(part); return; }
             File.Move(part, dst, true);
             Console.WriteLine($"{dst}: {files} files {bytes / 1048576.0:F1} MB, image with {entries.Count} entries");
+            if (sums != null) sums.Save(dst);
         } catch { File.Delete(part); throw; }
     }
+    /// The image's output, hashed CHUNK bytes at a time as it is written in order (NX_EXTRACT_CHUNK_SUMS)
+    sealed class ChunkHashStream : Stream {
+        readonly Stream s; readonly long chunk; readonly IncrementalHash h = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long seq, inChunk; bool broken; readonly List<string> sums = new();
+        public ChunkHashStream(Stream s, long chunk) { this.s = s; this.chunk = chunk; }
+        public override void Write(byte[] b, int o, int n) => Write(b.AsSpan(o, n));
+        public override void Write(ReadOnlySpan<byte> b) {
+            if (s.Position != seq) { if (s.Position + b.Length > chunk) broken = true; }   // the header, written last at 0, is in chunk 0, read back at the end
+            else {
+                seq += b.Length;
+                for (ReadOnlySpan<byte> rest = b; rest.Length > 0;) {
+                    int take = (int)Math.Min(rest.Length, chunk - inChunk);
+                    h.AppendData(rest[..take]); inChunk += take; rest = rest[take..];
+                    if (inChunk == chunk) { sums.Add(Convert.ToHexString(h.GetHashAndReset()).ToLowerInvariant()); inChunk = 0; }
+                }
+            }
+            s.Write(b);
+        }
+        public void Save(string image) {
+            if (broken) { Console.WriteLine("chunk checksums: the image was not written in order; none kept"); return; }
+            var info = new FileInfo(image);
+            if (sums.Count > 0) using (var f = File.OpenRead(image)) {
+                byte[] first = new byte[chunk]; f.ReadExactly(first);
+                sums[0] = Convert.ToHexString(SHA256.HashData(first)).ToLowerInvariant();
+            }
+            long us = (info.LastWriteTimeUtc - DateTime.UnixEpoch).Ticks / 10;
+            File.WriteAllText(image + ".chunks.json", $"{{\"key\": {{\"size\": {info.Length}, \"mtime_us\": {us}, \"chunk\": {chunk}}}, \"sha256\": [{string.Join(", ", sums.ConvertAll(x => $"\"{x}\""))}]}}\n");
+            Console.WriteLine($"chunk checksums: {sums.Count} kept in {image}.chunks.json");
+        }
+        public override bool CanRead => false; public override bool CanSeek => true; public override bool CanWrite => true;
+        public override long Length => s.Length;
+        public override long Position { get => s.Position; set => s.Position = value; }
+        public override void Flush() => s.Flush();
+        public override long Seek(long o, SeekOrigin w) => s.Seek(o, w);
+        public override void SetLength(long v) { if (v < seq) broken = true; s.SetLength(v); }
+        public override int Read(byte[] b, int o, int n) => throw new NotSupportedException();
+    }
+
     static void WriteStream(IFile file, Stream output, long size, byte[] buffer) {
         for (long offset = 0; offset < size;) {
             file.Read(out long got, offset, buffer.AsSpan(0, (int)Math.Min(buffer.Length, size - offset)), ReadOption.None).ThrowIfFailure();

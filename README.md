@@ -1,3 +1,16 @@
+# NX Pocket
+
+**One iPhone app for all your Switch games.** NX Pocket turns each of your games into a game pack (one `.nxpack` file) that you import into a single app, with a game library, signing on the phone, foldable-phone layouts and local play over Wi-Fi. NX Pocket for Mac makes the packs from your own game files and sends them to your iPhone.
+
+- **Guide:** [English](docs/nx-pocket/README.md) · [简体中文](docs/nx-pocket/README.zh-CN.md)
+- **Credits and licenses:** [NOTICE](NOTICE.md)
+
+> NX Pocket is not affiliated with, authorized or endorsed by Nintendo. Nintendo Switch is a trademark of Nintendo. NX Pocket provides no games or keys: use only games and console keys you legally own, and do not share game packs.
+
+NX Pocket is a fork of [nxnative](https://github.com/seedds/nxnative), which does the work underneath: running the game's own code natively, with Switch graphics rebuilt on Metal. nxnative's own README follows.
+
+---
+
 # nxnative
 
 Play your own Nintendo Switch games natively on iPhone and iPad. Bring your game (its NSP files) and your `prod.keys`; one script turns them into an IPA that you sideload.
@@ -253,13 +266,13 @@ Under a game, "60 fps with 1.2.0" means it runs at 60 fps (30 on the Switch) wit
 <td align="center" valign="top" width="33%"><img src="docs/images/super-monkey-ball-banana-rumble.jpg" width="256" alt="Super Monkey Ball Banana Rumble"><br><small><b><a href="dm/games/010031F019294000/README.md">Super Monkey Ball Banana Rumble</a></b></small></td>
 </tr>
 <tr>
+<td align="center" valign="top" width="33%"><img src="docs/images/mario-tennis-aces.jpg" width="256" alt="Mario Tennis Aces"><br><small><b><a href="dm/games/0100BDE00862A000/README.md">Mario Tennis Aces</a></b></small></td>
 <td align="center" valign="top" width="33%"><img src="docs/images/atelier-ryza-dx.jpg" width="256" alt="Atelier Ryza: Ever Darkness &amp; the Secret Hideout DX"><br><small><b><a href="dm/games/0100199023B2E000/README.md">Atelier Ryza: Ever Darkness &amp; the Secret Hideout DX</a></b></small></td>
 <td align="center" valign="top" width="33%"><img src="docs/images/dragon-quest-iii-hd-2d-remake.jpg" width="256" alt="DRAGON QUEST III HD-2D Remake"><br><small><b><a href="dm/games/01003E601E324000/README.md">DRAGON QUEST III HD-2D Remake</a></b></small></td>
-<td align="center" valign="top" width="33%"><img src="docs/images/hyrule-warriors-definitive-edition.jpg" width="256" alt="Hyrule Warriors: Definitive Edition"><br><small><b><a href="dm/games/0100AE00096EA000/README.md">Hyrule Warriors: Definitive Edition</a></b></small></td>
 </tr>
 <tr>
+<td align="center" valign="top" width="33%"><img src="docs/images/hyrule-warriors-definitive-edition.jpg" width="256" alt="Hyrule Warriors: Definitive Edition"><br><small><b><a href="dm/games/0100AE00096EA000/README.md">Hyrule Warriors: Definitive Edition</a></b></small></td>
 <td align="center" valign="top" width="33%"><img src="docs/images/metroid-prime-remastered.jpg" width="256" alt="Metroid Prime Remastered"><br><small><b><a href="dm/games/010012101468C000/README.md">Metroid Prime Remastered</a></b></small></td>
-<td></td>
 <td></td>
 </tr>
 </table>

@@ -146,11 +146,13 @@ typedef struct { int32_t stage, first, n, defer; uint64_t src; uint64_t h[32]; }
 // in place writes a new one. Luigi's Mansion 3 takes the command memory base + GetCommandMemoryUsed before each such bind (main+0x7c8964) and stores a handle there + 0x10 every frame
 // (main+0xb7d0d4); in a p_bind_handles record that word is the count, and the replay read a handle as a count of 535 million. h is the handle as the game gives it (32 bits: texture ID |
 // sampler ID << 20, all a patch writes); tbase / sbase are the numbering bases of the descriptor pools the command buffer had bound (hle_nvn.c bind_handles), added when it is read.
+// 24 bytes with its header, as small as that layout allows: games size command memory by GetCommandMemoryUsed, and Mario Tennis Aces records about 60 of these into each of thousands
+// of small per-object command buffers (at 32 bytes they took 1.9 KB of a 2.6 KB recording, and the court's 7,400 buffers overflowed its 16 MB command pool, main+0x62aac).
 // Read it with bind_rec, which gives a p_bind_handles
-typedef struct { int32_t stage, slot; uint64_t h; int32_t tbase, sbase; } p_bind_tex1;
+typedef struct { int16_t stage, slot; int32_t tbase; uint32_t h; int32_t sbase; } p_bind_tex1;
 static inline const p_bind_handles *bind_rec(uint32_t op, const void *a, p_bind_handles *t) {
     if (op != OP_BIND_TEX1) return a;
-    const p_bind_tex1 *b = a; uint64_t tid = b->h & 0xfffff, sid = (uint32_t)b->h >> 20;
+    const p_bind_tex1 *b = a; uint64_t tid = b->h & 0xfffff, sid = b->h >> 20;
     t->stage = b->stage; t->first = b->slot; t->n = 1; t->defer = 0; t->src = 0;
     t->h[0] = (tid ? tid + (uint64_t)b->tbase : 0) | (sid ? sid + (uint64_t)b->sbase : 0) << 20; return t;
 }

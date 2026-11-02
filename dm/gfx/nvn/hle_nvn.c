@@ -39,6 +39,7 @@
 #include <stdatomic.h>
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#include "../../host/dm_image.h"
 
 // ---------- Slot table, thunks, unimplemented stubs ----------
 typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
@@ -84,7 +85,7 @@ static void nvn_init_slots(void) {
     static int done; if (done) return; done = 1;
     g_log = getenv("DM_NVN_LOG") != NULL;
     unsigned long sz;
-    const nvn_impl *im = (const nvn_impl *)getsectiondata(&_mh_execute_header, "__DATA", "swnvn", &sz);
+    const nvn_impl *im = (const nvn_impl *)getsectiondata(DM_IMAGE, "__DATA", "swnvn", &sz);
     unsigned nim = im ? (unsigned)(sz / sizeof *im) : 0, hit = 0;
     for (unsigned i = 0; i < NVN_NFUNC; i++) nvn_slot[i].fn = (void *)nvn_unimpl_entry;
     for (unsigned k = 0; k < nim; k++) {
@@ -765,21 +766,22 @@ static void cs_dump(void) {   // Called once per frame (at present)
 static void put_hdr(uint8_t *p, uint32_t op, uint32_t size) { op_hdr h = {op, size}; memcpy(p, &h, sizeof h); if (op) cs_op(op, size); }
 // New segment: if the recording in progress has records, write a JUMP at the end of the old segment to link it. A recording with none yet starts in the new segment
 // (its first record is its handle), and the bytes at the old write position are not its own: after an END that took the last bytes there is no room there at all
+static void hostseg_release(uintptr_t lo, uintptr_t hi, const uint8_t *keep);
 static void cmd_new_segment(cmd_t *o, uint8_t *mem, size_t n) {
     uint8_t *start = align8(mem), *end = mem + n;
-    if (o->recording == 1 && o->cur) { if (cs_on() && o->end > o->cur) { pthread_mutex_lock(&g_cs_mu); g_cs.waste += (uint64_t)(o->end - o->cur); pthread_mutex_unlock(&g_cs_mu); } put_hdr(o->cur, OP_JUMP, 16); memcpy(o->cur + 8, &start, 8);
+    if (o->recording == 1 && o->cur) { if (cs_on() && o->end > o->cur) { pthread_mutex_lock(&g_cs_mu); g_cs.waste += (uint64_t)(o->end - o->cur); pthread_mutex_unlock(&g_cs_mu); } hostseg_release((uintptr_t)o->cur, (uintptr_t)o->cur + 16, mem); put_hdr(o->cur, OP_JUMP, 16); memcpy(o->cur + 8, &start, 8);
         o->used += 16; }   // the JUMP also occupies guest memory of this recording: count it in used, so the game packing the next recording right behind by used does not overwrite it
     o->cur = start; o->end = end;
 }
 // Host-supplied segment when the game's own command memory runs out: when the game's out-of-memory callback cannot allocate from its command memory pool, it calls AddCommandMemory with an empty pool (p = NULL, n = 0)
 // (opening the advanced stats page on the level 88 sorceress save: many list items in one frame, and the original implementation segfaulted here reading NULL+8). Our records are larger than real-device NVN commands, so the budget the game reserved for real-device usage is not necessarily enough,
-// so this is not an error state of the game but something we must catch: provide a segment of host memory to keep recording. The segment is replayed in place at submit and reclaimed after being kept for 8 frames (submit is in the same frame as recording or the next one).
+// so this is not an error state of the game but something we must catch: provide a segment of host memory to keep recording. The segment is replayed in place at submit and retained until its originating guest recording is overwritten.
 // (Do not use the whole game chunk as the range: SMBW sub-allocates many recordings out of one big chunk, and a later grant inside that chunk freed segments still in use.)
 // Reclaim follows the game's command memory chunks, not a frame count: the game caches recorded command handles and CALLs them every frame until it re-records them itself (SMBW's object setup handles);
 // once a handle was recorded into a host segment, the old "reclaim 8 frames after lending" rewrote the segment while the game still CALLed it (with overflow forced on the Mac, the replay read garbage commands: RGBA16F used as a depth format for a pipeline).
 // A segment hangs off one recording through the JUMP at the end of its guest part: that recording occupies [BEGIN, end of JUMP) in guest memory, and the game only gives those bytes out again once they are dead
 // (when it re-records that material in place; packing the next recording right behind by used never touches them, since used includes the JUMP). So a segment remembers that guest range and is reclaimed when the game gives out memory
-// overlapping it; segments overflowing from a host segment keep the same range.
+// whose bytes are actually overwritten; segments overflowing from a host segment keep the same range. A grant alone may cover adjacent live slots (max(slot size, 512)); it does not overwrite them.
 // The segment pool grows on demand (SMBW opening course: many small command buffers each overflow once per frame, and the old fixed 64 segments × 1 MB ran out within 8 frames); abort only beyond HOSTSEG_CAP in total.
 // A segment is HOSTSEG_SZ, with two exceptions (hostseg_size): an empty pool with a length of at most HOSTSEG_SMALL outside a recording gets that much rounded up to HOSTSEG_SMALL
 // (Super Mario Odyssey hands out many such 512-byte grants before recording; at 256 KB each, and with no recording to reclaim them by, they reached the cap entering the Wooded
@@ -789,6 +791,7 @@ static void cmd_new_segment(cmd_t *o, uint8_t *mem, size_t n) {
 #define HOSTSEG_CAP (1u << 30)
 uint64_t dm_nvn_frame_count(void);
 typedef struct { uint8_t *mem; size_t n; uint64_t frame; int busy; uintptr_t org_lo, org_hi; } hostseg_t;   // org: the guest range of the recording it hangs off (0 = unknown, never reclaimed)
+static _Atomic int g_hostseg_any;
 static hostseg_t *g_hostseg; static int g_nhostseg, g_caphostseg; static uint64_t g_hostseg_bytes;
 static pthread_mutex_t g_hostseg_mu = PTHREAD_MUTEX_INITIALIZER;
 static size_t hostseg_size(const cmd_t *o, int empty_pool, size_t want) {
@@ -802,30 +805,34 @@ static uint8_t *hostseg_take(const cmd_t *o, size_t n) {
     pthread_mutex_lock(&g_hostseg_mu);
     int in_seg = 0;   // by the segment's end too: a small segment can end where another one starts
     for (int i = 0; i < g_nhostseg && cur; i++) if (cur >= (uintptr_t)g_hostseg[i].mem && o->end == g_hostseg[i].mem + g_hostseg[i].n) { lo = g_hostseg[i].org_lo; hi = g_hostseg[i].org_hi; in_seg = 1; break; }
-    if (!in_seg && o && o->recording && o->cur) { lo = o->recording == 1 && o->begin && (uintptr_t)o->begin <= cur ? (uintptr_t)o->begin : cur; hi = cur + 16; }
+    // With recording == 2 no guest record/JUMP exists yet. Its first record can
+    // live wholly in host memory (an empty END after the previous grant filled).
+    // The unused next guest slot is not an origin and cannot reclaim that handle.
+    if (!in_seg && o && o->recording == 1 && o->cur) { lo = o->begin && (uintptr_t)o->begin <= cur ? (uintptr_t)o->begin : cur; hi = cur + 16; }
     for (int i = 0; i < g_nhostseg && !m; i++)
         if (!g_hostseg[i].busy && g_hostseg[i].n == n) { g_hostseg[i] = (hostseg_t){ g_hostseg[i].mem, n, f, 1, lo, hi }; m = g_hostseg[i].mem; }
     if (!m && g_hostseg_bytes + n <= HOSTSEG_CAP && (m = malloc(n))) {
         if (g_nhostseg == g_caphostseg) { g_caphostseg = g_caphostseg ? g_caphostseg * 2 : 64; g_hostseg = realloc(g_hostseg, sizeof *g_hostseg * (size_t)g_caphostseg); }
         g_hostseg[g_nhostseg++] = (hostseg_t){ m, n, f, 1, lo, hi }; g_hostseg_bytes += n;
     }
+    if (m) atomic_store_explicit(&g_hostseg_any, 1, memory_order_release);
     unsigned t = ++total; int ns = g_nhostseg; uint64_t bytes = g_hostseg_bytes;
     pthread_mutex_unlock(&g_hostseg_mu);
     if (!m) die("NVN command memory: the game's pool is empty and host-lent segments reached %u MB without being reclaimed by the game's blocks", HOSTSEG_CAP >> 20);
-    if (t == 1 || t % 1024 == 0) LOG("[nvn] the game's command memory ran short, the host lends a segment of %zu KB (%u times so far, frame %llu, segment pool %d segments, %llu KB)", n >> 10, t, (unsigned long long)f, ns, (unsigned long long)(bytes >> 10));
+    if (t <= 4 || t % 1024 == 0) LOG("[nvn] the game's command memory ran short, the host lends a segment of %zu KB (%u times so far, frame %llu, segment pool %d segments, %llu KB, recording=%d guest-origin=%#lx..%#lx)", n >> 10, t, (unsigned long long)f, ns, (unsigned long long)(bytes >> 10), o ? o->recording : 0, (unsigned long)lo, (unsigned long)hi);
     return m;
 }
-// The game gives out [lo, hi): segments whose recording's guest bytes overlap it are dead, reclaim them
-static void hostseg_release(uintptr_t lo, uintptr_t hi) {
+// Only actual writes retire a recording. keep is the new segment a JUMP is being linked to: its origin already includes that JUMP.
+static void hostseg_release(uintptr_t lo, uintptr_t hi, const uint8_t *keep) {
+    if (!atomic_load_explicit(&g_hostseg_any, memory_order_acquire)) return;
     pthread_mutex_lock(&g_hostseg_mu);
-    for (int i = 0; i < g_nhostseg; i++) if (g_hostseg[i].busy && g_hostseg[i].org_hi > lo && g_hostseg[i].org_lo < hi) g_hostseg[i].busy = 0;
+    for (int i = 0; i < g_nhostseg; i++) if (g_hostseg[i].busy && g_hostseg[i].mem != keep && g_hostseg[i].org_hi > lo && g_hostseg[i].org_lo < hi) g_hostseg[i].busy = 0;
     pthread_mutex_unlock(&g_hostseg_mu);
 }
 NVN(nvnCommandBufferAddCommandMemory, void, NVNcommandBuffer *c, const NVNmemoryPool *p, ptrdiff_t off, size_t n) {
     const pool_t *pl = (const pool_t *)p;
     if (!pl || n < 64) { if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.hostseg++; pthread_mutex_unlock(&g_cs_mu); } size_t sz = hostseg_size(CB(c), !pl, n); cmd_new_segment(CB(c), hostseg_take(CB(c), sz), sz); return; }
     if (!pl->mem) { LOG("[RED] AddCommandMemory: pool has no CPU storage"); return; }
-    hostseg_release((uintptr_t)(pl->mem + off), (uintptr_t)(pl->mem + off + n));
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.grants++; g_cs.grant_bytes += n; if (!g_cs.grant_min || n < g_cs.grant_min) g_cs.grant_min = n; if (n > g_cs.grant_max) g_cs.grant_max = n; pthread_mutex_unlock(&g_cs_mu); }
     { static int cblog = -1; if (cblog < 0) cblog = getenv("DM_NVN_CBLOG") != NULL; static uint64_t ng; if (cblog && (++ng <= 60 || ng % 500 == 0)) LOG("[nvn] AddCommandMemory #%llu cmd=%p pool %p +%#lx length %#zx (recording %d)", (unsigned long long)ng, (void *)c, (const void *)pl, (long)off, n, CB(c)->recording); }
     cmd_new_segment(CB(c), pl->mem + off, n);
@@ -847,7 +854,7 @@ static uint8_t *cmd_alloc_keep(cmd_t *o, uint32_t size, uint32_t keep) {
         o->cb((NVNcommandBuffer *)o, NVN_COMMAND_BUFFER_MEMORY_EVENT_OUT_OF_COMMAND_MEMORY, size + keep, o->cb_data);
     }
     if (cs_on()) { pthread_mutex_lock(&g_cs_mu); g_cs.bytes += size; g_cs.recs++; pthread_mutex_unlock(&g_cs_mu); }
-    uint8_t *p = o->cur; o->cur += size; o->used += size; put_hdr(p, 0, size);
+    uint8_t *p = o->cur; hostseg_release((uintptr_t)p, (uintptr_t)p + size, NULL); o->cur += size; o->used += size; put_hdr(p, 0, size);
     if (o->recording == 2) { o->begin = p; o->recording = 1; }   // The recording's first record is its handle
     return p;
 }
@@ -867,8 +874,40 @@ NVN(nvnCommandBufferEndRecording, NVNcommandHandle, NVNcommandBuffer *c) {
     return (NVNcommandHandle)o->begin;
 }
 NVN(nvnCommandBufferIsRecording, NVNboolean, const NVNcommandBuffer *c) { return ((const cmd_t *)c)->recording != 0; }
+// A pointer field of a copied record that points into the record itself (a texture snapshot, REC_SNAP) is moved with it
+static void reloc_field(void *field, const uint8_t *from, size_t n, uint8_t *to) {
+    uintptr_t v; memcpy(&v, field, sizeof v);
+    if (v >= (uintptr_t)from && v < (uintptr_t)from + n) { v = v - (uintptr_t)from + (uintptr_t)to; memcpy(field, &v, sizeof v); }
+}
+// CopyCommands copies the commands, as NVN does: the source's memory may be recorded over right after, while the copy stays as it was. Mario Tennis Aces (3.1.1) records each
+// model's draws into a command buffer of its own, copies them into the frame's (main+0x3c60), then records the same object again into the same memory for the next view (its shadow
+// map, its G-buffer); recorded as a CALL, every copy replayed the last recording, and the court and the players drew nothing but their shadows. CallCommands stays a reference
+// (the game promises the source outlives the call). The records are copied up to the source's END, through its JUMPs, and their snapshot pointers are moved with them
+static void cmd_copy(cmd_t *o, const uint8_t *q) {
+    for (int guard = 0; q && guard < (1 << 24); guard++) {
+        op_hdr hd; memcpy(&hd, q, sizeof hd);
+        if (hd.op == OP_END) return;
+        if (hd.op == OP_JUMP) { memcpy(&q, q + 8, 8); continue; }
+        if (hd.size < 8 || hd.op >= OP_COUNT_) { LOG("[RED] CopyCommands: record op %u size %u at %p, copy cut short", hd.op, hd.size, (const void *)q); return; }
+        // The game may give the copy exactly the source's GetCommandMemoryUsed (main+0x96824 sizes each object's memory so, from a scratch recording): its last record is followed
+        // by the END alone, so it keeps 8 bytes for the END instead of OP_RESERVE for a JUMP, as the scratch recording's own END took the last bytes
+        const uint8_t *nx = q + hd.size; op_hdr nh; memcpy(&nh, nx, sizeof nh);
+        while (nh.op == OP_JUMP) { memcpy(&nx, nx + 8, 8); memcpy(&nh, nx, sizeof nh); }
+        uint32_t keep = nh.op == OP_END && o->cur && o->cur + hd.size + OP_RESERVE > o->end ? 8 : OP_RESERVE;
+        uint8_t *p = cmd_alloc_keep(o, hd.size, keep); memcpy(p, q, hd.size); put_hdr(p, hd.op, hd.size);
+        uint8_t *a = p + 8; const uint8_t *from = q + 8; size_t n = hd.size - 8;
+        switch (hd.op) {
+        case OP_SET_RT: { p_set_rt *r = (p_set_rt *)a; for (int i = 0; i < 8; i++) reloc_field(&r->color[i], from, n, a); reloc_field(&r->depth, from, n, a); break; }
+        case OP_COPY_B2T: case OP_COPY_T2B: reloc_field(&((p_copy_b2t *)a)->tex, from, n, a); break;
+        case OP_COPY_T2T: reloc_field(&((p_copy_t2t *)a)->src, from, n, a); reloc_field(&((p_copy_t2t *)a)->dst, from, n, a); break;
+        case OP_CLEAR_TEX: reloc_field(&((p_clear_tex *)a)->tex, from, n, a); break;
+        default: break;
+        }
+        q += hd.size;
+    }
+}
 NVN(nvnCommandBufferCopyCommands, void, NVNcommandBuffer *c, int n, const NVNcommandHandle *h) {
-    for (int i = 0; i < n; i++) { uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_CALL, 16); memcpy(p + 8, &h[i], 8); }
+    for (int i = 0; i < n; i++) cmd_copy(CB(c), (const uint8_t *)h[i]);
 }
 NVN(nvnCommandBufferSignalEvent, void, NVNcommandBuffer *c, const NVNevent *e, NVNeventSignalMode m, NVNeventSignalLocation loc, int flags, uint32_t v) {
     (void)loc; (void)flags;
@@ -939,7 +978,7 @@ static const tex_t *tex_snap(void *rec_, size_t off, int k, const NVNtexture *t,
 NVN(nvnCommandBufferSetRenderTargets, void, NVNcommandBuffer *c, int n, const NVNtexture *const *ct, const NVNtextureView *const *cv,
     const NVNtexture *dt, const NVNtextureView *dv) {
     if (n < 0 || n > 8) { LOG("[RED] SetRenderTargets count %d", n); n = n < 0 ? 0 : 8; }
-    p_set_rt *r = REC_SNAP(c, OP_SET_RT, p_set_rt, n + 1); r->n = n;
+    p_set_rt *r = REC_SNAP(c, OP_SET_RT, p_set_rt, n + (dt != NULL)); r->n = n;   // a snapshot for the depth target (index n) only when there is one
     for (int i = 0; i < n; i++) { r->color[i] = ct ? tex_snap(r, SNAP_OFF(p_set_rt), i, ct[i], (uint64_t)__builtin_return_address(0)) : NULL; copy_view(&r->cview[i], &r->has_cview[i], cv ? cv[i] : NULL); }
     r->depth = tex_snap(r, SNAP_OFF(p_set_rt), n, dt, (uint64_t)__builtin_return_address(0)); copy_view(&r->dview, &r->has_dview, dv);
 }
@@ -959,7 +998,9 @@ NVN(nvnCommandBufferClearDepthStencil, void, NVNcommandBuffer *c, float depth, u
 }
 NVN(nvnCommandBufferSetViewports, void, NVNcommandBuffer *c, int first, int n, const float *v) {
     if (n < 0 || first + n > 16) { LOG("[RED] SetViewports first=%d n=%d", first, n); return; }
-    p_viewports *r = REC(c, OP_VIEWPORTS, p_viewports); r->first = first; r->n = n;
+    // n viewports, not all 16 (the replay reads the first n): the full 400-byte record made each of Mario Tennis Aces' small per-object recordings, which it sizes its command
+    // memory by (GetCommandMemoryUsed), about 0.4 KB larger, and the 7,400 of them it records as a court loads ran out of its 16 MB heap (main+0x62aac)
+    p_viewports *r = RECN(c, OP_VIEWPORTS, p_viewports, v, n); r->first = first; r->n = n;
     for (int i = 0; i < n; i++) memcpy(r->v[i], v + 4 * i, 16);
 }
 NVN(nvnCommandBufferSetScissor, void, NVNcommandBuffer *c, int x, int y, int w, int h) { *REC(c, OP_SCISSOR, p_scissor) = (p_scissor){x, y, w, h}; }
@@ -1184,6 +1225,7 @@ static pthread_mutex_t g_susp_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_susp_cv = PTHREAD_COND_INITIALIZER;
 static int g_susp, g_inflight_api;
 __thread _Atomic int dm_host_work;   // see dm.h (defined here: the graphics unit tests compile this file but not hle_thread.c)
+void (*dm_host_block_hook)(int entering);   // hle_thread.c sets it when core_lock is on: a host wait gives the guest core back (nvn_mtl.m mtl_wait_at; defined here like dm_host_work)
 static void gfx_enter(void) { pthread_mutex_lock(&g_susp_mu); while (g_susp) pthread_cond_wait(&g_susp_cv, &g_susp_mu); g_inflight_api++; pthread_mutex_unlock(&g_susp_mu); dm_host_work++; }
 static void gfx_leave(void) { dm_host_work--; pthread_mutex_lock(&g_susp_mu); g_inflight_api--; pthread_cond_broadcast(&g_susp_cv); pthread_mutex_unlock(&g_susp_mu); }
 void dm_gfx_enter(void) { gfx_enter(); }   // the same gate for the Vulkan layer's submits and presents (dm/gfx/vk)
@@ -2048,8 +2090,9 @@ static uint8_t *vpool_reserve(pool_t *o) {   // → the reserved range, or NULL
     if (o->vmode == 2) LOG("[nvn] virtual pool %p (%#llx bytes, flags %#x): sparse, own address range %p+%#llx, physical pages are remapped into it", (const void *)o, (unsigned long long)o->size, o->flags, a, (unsigned long long)len);
     return a;
 }
+static struct vpool *vpool_live(const void *pool);
 static void vpool_drop(pool_t *o) {   // caller holds g_vp_mu
-    struct vpool *v = o->vp; if (!v) return;
+    struct vpool *v = vpool_live(o); if (!v) { o->vp = NULL; return; }   // only a record the host still keeps (vpool_live)
     for (int k = 0; k < v->nrun; k++) mtl_pool_del(v->base + v->run[k].lo);
     munmap(v->base, v->len);
     for (uint64_t l = 0; l < (v->size + (2u << 20) - 1) >> 21; l++) free(v->pt[l]);
@@ -2337,13 +2380,16 @@ NVN_NOPROTO(nvnProgramSetSampleShading, NVNboolean, NVNprogram *p, int mode) { (
 // Singular / combined forms → plural / separate forms; state the replay layer does not have yet (conditional render, depth bounds, ...) is logged once and drawing continues (better to over-draw than to drop).
 #include "../tex/nvn_deswizzle.h"
 
-NVN(nvnCommandBufferCallCommands, void, NVNcommandBuffer *c, int n, const NVNcommandHandle *h) { h_nvnCommandBufferCopyCommands(c, n, h); }   // the replay layer treats CALL and COPY alike
+NVN(nvnCommandBufferCallCommands, void, NVNcommandBuffer *c, int n, const NVNcommandHandle *h) {   // a reference to the recording, replayed in place (CopyCommands copies)
+    for (int i = 0; i < n; i++) { uint8_t *p = cmd_alloc(CB(c), 16); put_hdr(p, OP_CALL, 16); memcpy(p + 8, &h[i], 8); }
+}
 // Combined texture handle (texture id | sampler id << 20) is recorded into the texture slot as is: the replay layer takes the texture from the low 20 bits and the sampler from the high bits (nvn_mtl.m NVN_RB_SAMPT)
 // One combined handle: recorded as the hardware lays the command out, the handle 16 bytes in, where Luigi's Mansion 3 patches it after recording (nvn_obj.h p_bind_tex1)
 NVN(nvnCommandBufferBindTexture, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNtextureHandle h) {
-    p_bind_tex1 *r = REC(c, OP_BIND_TEX1, p_bind_tex1); *r = (p_bind_tex1){st, i, (uint64_t)h, CB(c)->tex_base, CB(c)->samp_base};
+    p_bind_tex1 *r = REC(c, OP_BIND_TEX1, p_bind_tex1); *r = (p_bind_tex1){(int16_t)st, (int16_t)i, CB(c)->tex_base, (uint32_t)h, CB(c)->samp_base};
 }
 _Static_assert(offsetof(p_bind_tex1, h) == 8, "a single texture bind keeps its handle 16 bytes into the record (8 of header)");
+_Static_assert(sizeof(p_bind_tex1) == 16, "a single texture bind takes 24 bytes of command memory with its header");
 NVN(nvnCommandBufferBindTextures, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNtextureHandle *h) { bind_handles(c, OP_BIND_TEX, st, first, n, (const uint64_t *)h); }
 // "Deferred" binding: the GPU reads the handles h points to when it executes this command, not at recording. The per-texture binding of The Legend of Zelda: Breath of the Wild's engine (main+0xec2e64) always uses it,
 //   passing the address of the handle field in the texture sampler object with a count of 1; command blocks are recorded once and submitted repeatedly, and the handle is written / replaced afterwards. The host used to copy the handles at recording (mostly 0),
@@ -2398,11 +2444,24 @@ int nvn_sparse_alias(uint64_t lo, uint64_t hi) {
 // Textures of a sparse pool, read through its page table (see the sparse pools above): whether a pool is one, a copy of a texture's bytes (unmapped pages read as 0; → bytes not mapped),
 // whether its content may have changed since an upload (a mapping in its range newer than gen, or a physical page behind it written after the dirty-page stamp), and the write
 // protection of the physical pages behind it (taken before an upload, as for any packaged texture)
-static struct vpool *vpool_at(const void *pool, uint64_t a) {   // caller holds g_vp_mu
+// The pool's sparse record, only while it is one of the live ones and still this pool's (caller holds g_vp_mu). vp lies in the game's NVNmemoryPool, and a texture keeps the
+// pool pointer of its object: Mario Tennis Aces (iPhone, 893 s into a session of local play rooms made and left) uploaded a new 32x32x32 CPU-written texture whose pool's vp
+// held a stray pointer, and vpt_walk crashed on that "page table". The pointer is compared with the live records before anything is read through it
+static struct vpool *vpool_live(const void *pool) {
     struct vpool *v = pool ? ((const pool_t *)pool)->vp : NULL;
+    if (v) for (int i = 0; i < g_nvp; i++) if (g_vp[i] == v) return v->pool == pool ? v : NULL;
+    return NULL;
+}
+static struct vpool *vpool_at(const void *pool, uint64_t a) {
+    struct vpool *v = vpool_live(pool);
     return v && a >= (uint64_t)(uintptr_t)v->base && a < (uint64_t)(uintptr_t)v->base + v->size ? v : NULL;
 }
-int nvn_sparse_pool(const void *pool) { return pool && ((const pool_t *)pool)->vp; }   // no lock: set at Initialize, cleared at the first mapping (an aliased pool) or Finalize; called per texture lookup
+// Whether the pool is a sparse virtual pool: only a record the host still keeps for this pool counts (vpool_live), anything else is an ordinary pool. Per texture lookup, over the few live pools
+int nvn_sparse_pool(const void *pool) {
+    if (!pool || !((const pool_t *)pool)->vp) return 0;
+    pthread_mutex_lock(&g_vp_mu); int r = vpool_live(pool) != NULL; pthread_mutex_unlock(&g_vp_mu);
+    return r;
+}
 uint64_t nvn_sparse_gen(void) { return atomic_load(&g_vp_gen); }
 uint64_t nvn_sparse_copy(const void *pool, void *dst, uint64_t a, uint64_t n) {
     pthread_mutex_lock(&g_vp_mu); struct vpool *v = vpool_at(pool, a); uint64_t miss = 0;

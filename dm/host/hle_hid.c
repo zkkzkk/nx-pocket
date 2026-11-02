@@ -27,7 +27,7 @@ typedef struct { int64_t sampling; uint64_t buttons; int32_t lx, ly, rx, ry; uin
 _Static_assert(sizeof(NpadState) == 0x28, "NpadState");
 
 // Front-end publishing: the keyboard / touch path (dm_input_set), the scripted path (script_set: DM_KEYS and DM_CTL) and player 1's physical controller path (dm_pad_set) are ORed;
-// each further player has a controller path of its own (dm_pad_set_player). Press edges are latched until the game's next read so short presses are not lost. Scripted presses have
+// each further player has a controller path of its own (dm_pad_set_player). Press edges are latched until the game's next read so short presses are not lost (and kept for the reads just after it, take_latch). Scripted presses have
 // their own path because a connected controller publishes its whole state on every change (a DualShock 4's sticks change all the time), which overwrote them on the shared one;
 // the separate paths also keep scripted input out of DM_REC, which records the physical ones (rec_read)
 static _Atomic uint64_t g_btn, g_axes, g_latch, g_sc_btn, g_sc_axes, g_sc_latch, g_pad_btn[DM_PLAYERS], g_pad_axes[DM_PLAYERS], g_pad_latch[DM_PLAYERS];
@@ -61,6 +61,20 @@ void dm_pad_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry
 static void script_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
     uint64_t old = atomic_exchange(&g_sc_btn, buttons); atomic_fetch_or(&g_sc_latch, buttons & ~old); atomic_store(&g_sc_axes, pack(lx, ly, rx, ry));
     shake_note();
+}
+// A latched press stays in every read for LATCH_HOLD_NS after the read that took it (guest clock): a game that reads the same controller more than once a frame (an input update and
+// a menu pass) saw a press released before its first read in that read only, so its other reader missed the press. Slot 0 is the keyboard / touch path, 1 + p player p's controller (the scripted path keeps its exact edges, as DM_REC replays them)
+#define LATCH_HOLD_NS 12000000ull
+static struct { uint64_t bits, until; } g_shown[1 + DM_PLAYERS];
+static pthread_mutex_t g_shown_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t take_latch(_Atomic uint64_t *latch, int slot) {
+    uint64_t l = atomic_exchange(latch, 0), now = guest_ns(), r;
+    pthread_mutex_lock(&g_shown_mu);
+    if (now >= g_shown[slot].until) g_shown[slot].bits = 0;
+    if (l) { g_shown[slot].bits |= l; g_shown[slot].until = now + LATCH_HOLD_NS; }
+    r = g_shown[slot].bits;
+    pthread_mutex_unlock(&g_shown_mu);
+    return r;
 }
 uint64_t dm_input_samples(void) { return (uint64_t)atomic_load(&g_sampling); }
 // DM_KEYS scripted input (for tests): "seconds:key[+key][~hold seconds][*count/interval seconds],...", e.g. "8:A,12:A,15:Down~0.5,16:A+B,40:A*80/2" (A every 2 s from 40 s on, 80 times). Key names A B X Y LS RS L R ZL ZR (plus the sticks LLeft LUp LRight LDown and RLeft RUp RRight RDown) Plus Minus Left Up Right Down, left stick LLeft LUp LRight LDown,
@@ -416,11 +430,11 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     uint64_t b = 0; int32_t a[4] = {0};
     if (!pl) {
         keys_sync();   // DM_KEYS frame steps due in this frame, before the read
-        b = atomic_load(&g_btn) | atomic_exchange(&g_latch, 0);
+        b = atomic_load(&g_btn) | take_latch(&g_latch, 0);
         uint64_t k = atomic_load(&g_axes); for (int i = 0; i < 4; i++) a[i] = ax(k, i);
     }
     for (int p = 0; p < DM_PLAYERS; p++) if (src >> p & 1) {
-        b |= atomic_load(&g_pad_btn[p]) | atomic_exchange(&g_pad_latch[p], 0);
+        b |= atomic_load(&g_pad_btn[p]) | take_latch(&g_pad_latch[p], 1 + p);
         uint64_t v = atomic_load(&g_pad_axes[p]); for (int i = 0; i < 4; i++) a[i] = pick(a[i], ax(v, i));
     }
     if (!pl) {   // the physical sources so far (DM_REC records them, DM_BTN_SHAKE only from player 1's own controller and the keyboard, as shake_note), then the scripted path

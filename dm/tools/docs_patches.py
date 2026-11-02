@@ -68,6 +68,9 @@ def payoff(gap):   # the Gaps order: open gaps, then blocked, kept and unreviewe
 
 # The host's build-keyed rows: (table, the start of the row's label ('' = any), main build ('' = any), entry); the first that fits classifies a row
 HOST_BINDING = [
+    ('', '', 'c2dc405ac414c37c8b1c50219c7a0f0c', {'what': "Open Course World's client (hle_ocw.m) installed for Super Mario Maker 2 3.0.3's main only", 'now': 'build', 'goal': 'build', 'purpose': 'runtime',
+     'kept': "the community server's protocol is checked against this build's client code; another build needs its own check",
+     'why': 'the WebSocket header gate and the account patches are at fixed offsets of this main (patches.py)'}),
     ('k_locks', 'Unity', '', {'what': "Unity's Application.targetFrameRate at a fixed address", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
      'why': 'an IL2CPP player registers the setter by its icall name, so the field can be found in any Unity game; whether to raise it stays the profile\'s'}),
     ('k_locks', 'RE Engine', '', {'what': "RE Engine's frame limit at a fixed pointer", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
@@ -125,6 +128,11 @@ SWITCH_BINDING = [
     ('ue_fps_cvar', '', {'what': "the game's own Unreal frame-limit variable", 'now': 'game', 'goal': 'game', 'purpose': 'frame rate', 'why': "the game's own variable, which its settings apply to t.MaxFPS; the rewriter finds it by name (ue_cvar.py)"}),
     ('perf_mode', '', {'what': 'Boost whatever the operation mode', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': 'a combination a Switch 1 never reports: a choice per game'}),
     ('op_mode', '', {'what': 'the operation mode at start', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': "the game's controls (handheld: the touch screen instead of a gyro pointer)"}),
+    ('core_lock', '', {'what': "Horizon's one guest thread per core, or one in all", 'now': 'game', 'goal': 'host', 'purpose': 'race',
+                       'blocked': 'one thread at a time costs games that run work on several cores; only Super Mario Maker 2 is checked with it',
+                       'why': 'a game whose threads race on data the Switch keeps ordered by its cores (hle_thread.c core_acquire)'}),
+    ('local_play', '', {'what': 'local wireless over the LAN offered in the launcher, on by default', 'now': 'game', 'goal': 'game', 'purpose': 'runtime',
+                        'why': 'a game whose local wireless was played over the LAN (hle_ldn.c); the protocol is the same for every game, but each needs its rooms checked'}),
 ]
 
 

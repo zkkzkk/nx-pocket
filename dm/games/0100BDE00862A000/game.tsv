@@ -1,0 +1,45 @@
+# Game profile of Mario Tennis Aces (Switch, update 3.1.1 = v851968). Brought up on the Mac: the title, the opening movies, the start of Adventure, the main menu and a Free Play singles match to its end
+# Format: see dm/games/README.md
+# Camelot's engine with NintendoWare (G3d, Ui2d, Vfx, Atk, Font) and NEX / Pia networking, on SDK 4.5.0, NVN; subsdk0 is the SDK's movie library (its WebM / VP9 movies).
+# RomFS is mostly Camelot's NARC archives (.narc, .ntex, .nptl, some .bin): the Nitro layout with members packed by type byte (zlib, deflate, Camelot's LZ, LZ4), which hold the models' and
+# effects' BNSH (dm/gfx/tools/shader_split.py narc_members). What it needed from the host is general: the font engine's heap (hle_sdk16.c), SDK 4's base-object movie decoder constructor
+# (hle_movie.c), compact command records and CopyCommands as a copy (hle_nvn.c: thousands of per-object command buffers sized by GetCommandMemoryUsed in a 16 MB pool, copied then
+# recorded again), and an sRGB render target read through a linear texture object on the same storage (nvn_mtl.m tex_mtl_)
+
+# ---- Identity ----
+title_id	0100BDE00862A000
+program_id	0100BDE00862A000
+
+# ---- App ----
+name	Mario Tennis Aces
+ipa	MarioTennisAces.ipa
+app_category	public.app-category.sports-games
+
+# ---- Versions ----
+build	v851968	3.1.1	main=52cc27e48904c4073907588df35c4347	subsdk0=303578054faefc2198114b62e408c498	sdk=e01ad5381c948c4ec3b0bb210b08d5c8
+package	v851968
+shader_versions	v851968
+
+# ---- Files ----
+# every module main imports from
+modules	main subsdk0 sdk
+romfs_marker	movie/oplay.webm
+zip_store	.bfsar:.bfsha:.narc:.nptl:.webm:.metallib
+
+# ---- Local play ----
+# Local wireless over the LAN (hle_ldn.c, ldn_mitm's protocol) through the host's sockets (hle_sock.c): the launcher's Local play switch, on by default
+local_play	lan
+
+# ---- Memory ----
+# no system resource: main sets a heap of at most the pool − 64 MB in the 4 GB layout's 3.25 GB heap region (3.14 GB here); about 1.4 GB resident on the Mac through the menus
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 0 MB of system resource: IsVirtualAddressMemoryEnabled is false, as on Horizon
+sys_resource	0x0
+
+# ---- Shader split ----
+# 21,703 shaders, almost all in the NARC members (models, effects, the deferred passes' .z4 archives), 40 in main
+shader_groups	/model/=model /texture/=texture /snd/=snd /layout/=layout /effect/=effect /entrance/=entrance /audience/=audience /npc/=npc /gimmickparam/=gimmickparam /msg/=msg /movie/=movie /ssg_system/=ssgsystem /shader/=shader /json/=json /font/=font /ssg_develop/=ssgdevelop /gimmickmap/=gimmickmap
+shader_note	Mario Tennis Aces shaders

@@ -103,6 +103,7 @@ static uint64_t g_vt_addr[31]; static uint32_t g_vt_valid;
 static uint64_t g_vbuf_resolve, g_vbuf_reuse, g_vbuf_set, g_vbuf_skip, g_vbuf_copies, g_vbuf_copy_bytes;   // copies: vertex streams at addresses not 4-byte aligned (vbuf_unaligned)
 static id<MTL4ArgumentTable> g_present_args;
 static id<MTLBuffer> g_present_uv[3];
+static id<MTLBuffer> g_present_uv_fx[3];   // the MetalFX input pass's rectangle (present_encode_m4), beside the present's own
 static uint64_t g_present_alloc_fence[3];
 // Under g_pq_mu: per present allocator, the newest ticket its commit feedback reported done on the GPU. present_now resets an allocator only once this reaches the ticket that
 // last used it. g_pq_done is not that: every display-link callback sets it to ticket - 1 (the previous present was committed, not run) and a present that was not submitted sets
@@ -465,6 +466,9 @@ void mtl_init(void) {
         g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
         if (!g_present_uv[i]) MDIE("failed to create present UV buffer[%d]", i);
         res_add(g_present_uv[i]);
+        g_present_uv_fx[i] = [g_dev newBufferWithLength:sizeof(float) * 8 options:MTLResourceStorageModeShared];
+        if (!g_present_uv_fx[i]) MDIE("failed to create present MetalFX UV buffer[%d]", i);
+        res_add(g_present_uv_fx[i]);
     }
     g_ev = [g_dev newSharedEvent];
     g_keep = [NSMutableArray array];
@@ -1553,7 +1557,14 @@ static int fast_wake(void) { static int v = -1; if (v < 0) { const char *e = get
 static void post_early(uint64_t fence) {
     post_complete(fence, 0, 0);
 }
+extern void (*dm_host_block_hook)(int entering);   // hle_nvn.c
+static int mtl_wait_at_(uint64_t fence, uint64_t timeout_ns, int site);
+// A wait for the GPU blocks in the kernel on the Switch: under core_lock it gives the guest core back (an NVN call otherwise holds it, as the user-mode driver does)
 static int mtl_wait_at(uint64_t fence, uint64_t timeout_ns, int site) {
+    if (g_done >= fence || !timeout_ns || !dm_host_block_hook) return mtl_wait_at_(fence, timeout_ns, site);
+    dm_host_block_hook(1); int r = mtl_wait_at_(fence, timeout_ns, site); dm_host_block_hook(0); return r;
+}
+static int mtl_wait_at_(uint64_t fence, uint64_t timeout_ns, int site) {
     if (g_done >= fence) { if (ws_on()) ws_put(site, 0, 0); return 1; }
     uint64_t w0 = ws_t0();
     if ((site == WS_SYNC || site == WS_SYNC_NEWEST || site == WS_ACQ) && fast_wake() && g_ev && fence <= g_fence) {   // the game's own wait: wake on the GPU's signal (rec_signal(g_ev, fence) after each submission)
@@ -1601,7 +1612,7 @@ void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); snap_dra
 
 // ================= Render replay =================
 #include "../../host/front.h"
-static int g_red_once[140];
+static int g_red_once[141];
 #define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("[RED] " __VA_ARGS__); } while (0)
 // NVN vertex streams 0–15 → Metal vertex buffer slots: 0–13 go to 16–29 (30 is the constant fallback buffer), 14 and 15 to 14 and 15. Metal has only the 31 slots 0–30; translated shaders use only buffer(0) (the argument buffer),
 // and the host's own vertex functions read no vertex buffers. 13 Sentinels uses stream 15, and the old 16 + stream went out of range (Metal assertion: buffer index (31) must be < 31)
@@ -2615,6 +2626,15 @@ static id<MTLTexture> image_texture(const tex_t *t, MTLTextureDescriptor *d) {
     }
     return mt;
 }
+// The linear twin of an sRGB format (NVN's enum: RGBX8 / RGBA8, DXT1 / 3 / 5, BPTC, the 14 ASTC sizes, BGRX8 / BGRA8), the storage key of shared textures (tex_mtl_)
+static uint32_t fmt_linear(uint32_t f) {
+    if (f == 0x37 || f == 0x38) return f - 0x13;
+    if (f >= 0x45 && f <= 0x48) return f - 4;
+    if (f == 0x4E) return 0x4D;
+    if (f >= 0x87 && f <= 0x94) return f - 14;
+    if (f == 0x9B || f == 0x9C) return f - 2;
+    return f;
+}
 static id<MTLTexture> tex_mtl_(const tex_t *ct) {
     tex_t *t = (tex_t *)ct;
     if (!t || !t->serial) return nil;
@@ -2680,7 +2700,9 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct) {
         tex_put(t->serial, pk);
         return pk->view ? pk->view : pk->tex;
     }
-    if (have) return have;
+    // A texture packaged before and not judged packaged now (the snapshot a descriptor slot keeps, a CPU-written mark seen on another thread) still has its package here:
+    // hand out the package's texture, never the NvPkg itself (Super Mario Maker 2: -[NvPkg gpuResourceID] from tex_by_id while a downloaded course loaded)
+    if (have) { if ([have isKindOfClass:[NvPkg class]]) { NvPkg *pk = have; return pk->view ? pk->view : pk->tex; } return have; }
     if (t->d.target == 10) {   // Buffer texture (TARGET_BUFFER): create the texture-buffer view directly on the memory pool buffer (zero copy; the GPU reads the pool's current content at execution time, same as NVN semantics)
         uint32_t pf = 0; uint8_t swz[4]; int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
         void *mb; uint64_t mo;
@@ -2710,8 +2732,20 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct) {
     // IMAGE permits shader writes; it does not change storage. Xenoblade Chronicles 3's depth and stencil-sampling objects differ only by this flag. Separate Metal textures
     // made the stencil read zero and rejected every deferred-lighting pass. Actual image writes add Metal usage before opening their encoder (image_prepare).
     ak.d.flags &= ~NVN_TEXTURE_FLAGS_IMAGE;
+    // An sRGB format and its linear twin name the same storage too: Mario Tennis Aces (3.1.1) tone-maps a match into an RGBA8_SRGB render target and draws it into the window through
+    // an RGBA8 texture object on the same pool offset; as two Metal textures the window read one nothing ever wrote, and every match and the adventure map showed only the HUD on black.
+    // The key takes the linear format; an object of the other format gets a view of the shared texture (sRGB and linear views need no format-view usage, tex_need_pfv)
+    ak.d.format = fmt_linear(ak.d.format);
     pthread_mutex_lock(&g_smu); __unsafe_unretained id shared = hm_get_id(&g_alias, &ak); if (shared) nvn_hm_put(&g_alias_seen, &ak, (void *)(uintptr_t)(g_fence + 1)); pthread_mutex_unlock(&g_smu);
-    if (shared) { tex_put(t->serial, shared); return shared; }
+    if (shared) {
+        uint32_t want = 0; uint8_t swz[4]; id<MTLTexture> st = shared;
+        if (nvn_fmt_to_mtl(t->d.format, &want, swz) && want && want != (uint32_t)st.pixelFormat && !tex_need_pfv(st.pixelFormat, (MTLPixelFormat)want)) {
+            id<MTLTexture> vw = [st newTextureViewWithPixelFormat:(MTLPixelFormat)want];
+            if (vw) { tex_put(t->serial, vw); return vw; }
+            RED_ONCE(140, "cannot make the %lu view of a shared %lu texture: the object reads it in the shared format", (unsigned long)want, (unsigned long)st.pixelFormat);
+        }
+        tex_put(t->serial, shared); return shared;
+    }
     id<MTLTexture> mt = tex_linear(t);
     if (!mt) {
         MTLTextureDescriptor *d = tex_desc(t, 0);
@@ -11179,6 +11213,23 @@ static MTLViewport present_viewport(double cw, double ch, double dw, double dh) 
     if (fabs((dw / dh) / (cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
     return vp;
 }
+// Fill mode (DM_FIT, a launcher setting): fit (default) is present_viewport's letterboxing, stretch fills the canvas, crop fills it at the game's aspect ratio and samples only the
+// centred part of the valid rectangle that fits (r shrinks to it, so MetalFX and the bilinear pass see the visible part only). front_ios.m gives the game view the whole screen for both
+static int present_fit_mode(void) {
+    static int m = -1;
+    if (m < 0) { const char *e = getenv("DM_FIT"); m = e && !strcmp(e, "stretch") ? 1 : e && !strcmp(e, "crop") ? 2 : 0; }
+    return m;
+}
+static MTLViewport present_fill(NSUInteger r[4], double dw, double dh) {
+    int mode = present_fit_mode();
+    if (!mode) return present_viewport(r[2], r[3], dw, dh);
+    if (mode == 2) {
+        double s = fmax(dw / r[2], dh / r[3]);
+        NSUInteger vw = MIN(r[2], (NSUInteger)llround(dw / s)), vh = MIN(r[3], (NSUInteger)llround(dh / s));
+        r[0] += (r[2] - vw) / 2; r[1] += (r[3] - vh) / 2; r[2] = vw; r[3] = vh;
+    }
+    return (MTLViewport){0, 0, dw, dh, 0, 1};
+}
 // The valid source rectangle of a present (x, y, width, height; the crop of nvnWindowSetCrop, zero = the whole texture); 0 when it lies outside the texture
 static int present_crop_rect(id<MTLTexture> src, const int crop[4], NSUInteger r[4]) {
     r[0] = 0; r[1] = 0; r[2] = src.width; r[3] = src.height;
@@ -11191,6 +11242,8 @@ static int present_crop_rect(id<MTLTexture> src, const int crop[4], NSUInteger r
 }
 static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]) {
     NSUInteger r[4]; if (!present_crop_rect(src, crop, r)) return 0;
+    double dw = dst.width, dh = dst.height;
+    MTLViewport vp = present_fill(r, dw, dh);
     NSUInteger cx = r[0], cy = r[1], cw = r[2], ch = r[3];
     static uint64_t last_crop[8]; uint64_t meta[8] = {src.width, src.height, cx, cy, cw, ch, dst.width, dst.height};
     if (memcmp(meta, last_crop, sizeof meta)) { memcpy(last_crop, meta, sizeof meta);
@@ -11198,8 +11251,6 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTex
              (unsigned long)cx, (unsigned long)cy, (unsigned long)cw, (unsigned long)ch, (unsigned long)dst.width, (unsigned long)dst.height); }
     present_pipeline(dst.pixelFormat);
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-    double dw = dst.width, dh = dst.height;
-    MTLViewport vp = present_viewport(cw, ch, dw, dh);
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
     static double last_vp[4];   // Log one line when the viewport changes (used by the real-device screen-level acceptance screen_check.py to check the aspect ratio)
     if (memcmp(last_vp, &vp, sizeof last_vp)) { memcpy(last_vp, &vp, sizeof last_vp);
@@ -11291,7 +11342,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     NSUInteger r[4]; if (!present_crop_rect(src, crop, r)) return 0;
     present_pipeline(dst.pixelFormat);
     double dw = dst.width, dh = dst.height;
-    MTLViewport vp = present_viewport(r[2], r[3], dw, dh);
+    MTLViewport vp = present_fill(r, dw, dh);
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
     id<MTLTexture> tex = present_raw_src(src), up = fx ? fx_encode(fx, cb, tex, r, vp, dst.pixelFormat, fx == &g_fx_present) : nil;
     if (up) { tex = up; r[0] = r[1] = 0; r[2] = up.width; r[3] = up.height; }   // the scaled picture, the viewport's size: drawn 1:1

@@ -19,18 +19,22 @@ DM_CHEATS_ON	switch	Comma-separated cheat names turned on at launch, besides the
 DM_CHEATS_WINDOW	switch	`1` opens the Mac Cheats panel beside the game from the start
 DM_COPY_GAME_RESOURCES	switch	`NO` skips the Xcode build phase that copies the game's resources into the app (`stage_resources.sh`, on by default); `build_ipa.sh` sets it for its unsigned build, which packs them itself
 DM_COPY_ROMFS	switch	`NO` keeps the game files out of the app, in the Xcode build phase (`stage_resources.sh`) and in the unsigned IPA of `build_ipa.sh` (on by default): `main.m` takes the validated `Documents/romfs.img` copied by `scripts/push_romfs.sh`, then a `Documents/romfs` folder; the build writes the image's identity as `romfs.id` into the app, and `main.m` uses only a matching image (`--romfs separate` of the NSP script sets this)
+DM_CORE_LOCK	switch	`0` / `1` / `2` overrides the profile's `core_lock`: none, one guest thread per core, or one guest thread at a time; a thread gives its core back at SVCs, native waits and blocking host I/O, and a higher-priority waiter preempts a lower-priority holder in guest code
 DM_CTL	diagnostic	`=<file>` (Mac): the host polls the file every 100 ms and runs each appended line: button presses, `shot`, `passdump`, `texdump`, `env KEY=VALUE`, `peek`, `memdump`, `drag` and more
 DM_DBG	diagnostic	When set, prints the guest's `svcOutputDebugString` text to stderr as `[guest]` lines
 DM_DBG_AU_FRAMES	diagnostic	`=<frames>` asks the Mac's Core Audio output for that many frames per callback instead of about 5 ms (1024 reproduces the iOS default that caused crackling)
 DM_DETCLOCK	switch	`=<step ns>`: from the first present on, the guest clock advances a fixed step per present instead of following the wall clock, and the random source becomes a fixed-seed stream (replay and test runs)
 DM_DETCLOCK_PACE	switch	`=1` with `DM_DETCLOCK`: each frame takes at least one clock step of wall time, so background loading keeps up with the fixed clock (used by the screenshot gate)
+DM_DEVICE_ID	diagnostic	`=<hex>` this device's identity for local play (the account ID's low bits and the MAC the room shows); default: a random one kept in `~/Library/nxnative-device-id` (two instances on one Mac need different ones)
 DM_DISPLAY_NAME	switch	Overrides the iOS app's name in `build_ipa.sh` (default the game name in the base NSP's control data)
+DM_DPAD_DIAGONAL	player	`=0..1` the on-screen D-pad's diagonal zone, a fraction of the 90° between two directions (default `0.5` = 45°; `0` = four directions); launcher setting
 DM_DYNAMIC_RESOLUTION	player	`1` lets NieR:Automata 1.0.3's own dynamic resolution scale between 70 and 100 %, `0` (default) keeps full resolution; only on the builds whose patches.py names the DYNAMIC_RESOLUTION capability (`hle_fpslock.c` `k_nier_dr`). The launcher's Dynamic resolution
 DM_ENTITLEMENTS	path	`=<plist>` gives a prepared Xcode project another entitlements file instead of the Increased Memory Limit one, and the ad-hoc signature of the unsigned IPA's executable carries them; empty means no entitlements
 DM_ENV_FILE	path	`=<file>` makes `build_ipa.sh` bake its `KEY=VALUE` lines into the app as `dm/env.txt`, applied at boot; `Documents/env.txt` overrides them
 DM_ENV_FILE_KEYS	switch	Set by the iOS app and the Mac launcher at launch to the space-separated names an env file set; the settings screen keeps those values and shows them greyed out
 DM_ENV_LAUNCH_KEYS	switch	Set at launch by the Mac launcher (the launcher settings already in the environment) and the iOS app (every DM_* variable already in it) to the space-separated names; the settings screen keeps those values and shows them greyed out
 DM_FD_LOG	diagnostic	`=<seconds>` logs, every that many seconds, the number and kinds of file descriptors the process has open
+DM_FIT	player	`fit` (the default) keeps the game's aspect ratio with black bars; `stretch` fills the screen; `crop` fills it at the game's aspect ratio and cuts the overflow off both sides
 DM_FIXED_TIME	switch	`=<seconds>`: the user clock always returns that time and the host time zone is pinned to UTC, for deterministic comparison
 DM_FONT_DIR	path	Folder of the shared-font stand-ins (`standard.ttf`, `nintendo_ext.ttf` with the button icons); the app, the Mac launcher and the NSP script set it
 DM_FORCE_STRICT	diagnostic	`=1` makes the loader fail on forced-hook entries no module references, instead of only noting them (for checking a mistyped list)
@@ -66,6 +70,8 @@ DM_KBD_PLAYER	switch	`own` makes the Mac keyboard player 1 on its own, with cont
 DM_KEYS	switch	Scripted input: `<seconds or f<frame>>:<key>[+key][~hold or ~f<frames>][*count/interval],…` presses buttons, sticks, touches and `Shake` at those times; `=@<file>` reads the steps from the file
 DM_LANG	player	Game language as a language code (default `en-US`; the iOS app sets the one the IPA was packed with)
 DM_LAUNCHER	switch	`0` skips the iOS settings screen or the Mac settings window and starts the game at once, with the saved choices (on the Mac also `--no-launcher`)
+DM_LDN_PORT	diagnostic	`=<port>` the UDP / TCP port of local wireless over the LAN (default 11452, ldn_mitm's); every device in a room needs the same
+DM_LDN_SCAN_MS	diagnostic	`=<ms>` how long a local wireless scan waits for rooms to answer (default 500)
 DM_LINK_VTICK	switch	`0` keeps the system's display-link rate on 144 or 165 Hz Mac screens; by default the link counts only the refreshes nearest a steady 1/60 s clock
 DM_LOADHASH	diagnostic	`=1` logs an address-independent SHA-256 per module after loading
 DM_LONGFRAME	diagnostic	`0` turns off the long-frame log (on by default), a line for a frame over 20 ms or with GPU time over 16.7 ms that is clearly above recent frames
@@ -83,7 +89,14 @@ DM_MOTION_HID	switch	On the Mac, `0` disables the passive Switch Pro Controller 
 DM_MOTION_LOG	diagnostic	`=1` logs player 1's mapped motion sample once a second per source (phone / GameController / controller HID; acceleration in G, gyro in revolutions/s), for checking the axes: flat and still reads acc 0 0 -1
 DM_MOVIE_TRACE	diagnostic	When set, the movie decoder logs every call with its thread and decoder (by default the first 12 calls, then every 2^k-th)
 DM_MSL_DIR	path	Parent folder of the shader libraries: NVN loads from `b-<chain version>/` beneath it, Vulkan from `vk/`, GL from `gl/`; the app and the Mac launcher set it
-DM_NICK	switch	The account nickname the game sees (default `Player`)
+DM_NET	player	`lan` plays the game's local wireless over the LAN (ldn_mitm's protocol, `hle_ldn.c`) through the host's sockets (`hle_sock.c`); `off` (the default unless the profile's `local_play` is `lan`) keeps the network offline. Refused under the deterministic clock
+DM_NET_BIND	diagnostic	`1` binds every guest socket to the local play interface's address (two instances on one Mac, one on `lo0` and one on `en0`)
+DM_NET_IF	diagnostic	`=<interface>` the interface local play uses (default: the first up IPv4 `en` interface, else `lo0`)
+DM_NET_LOG	diagnostic	`1` logs the guest's socket calls (the first 200 data calls) and local wireless's protocol traffic
+DM_NET_NIFM	diagnostic	`1` reports the LAN as an available network with the host's address to nifm (a game's LAN mode needs it; local wireless does not)
+DM_NET_PEERS	player	`=<ip>[:<port>],…` other devices local play reaches directly: scans are sent to them and broadcasts copied to them (an iPhone cannot broadcast)
+DM_NET_UNICAST	diagnostic	`1` never sends broadcasts: scans sweep the subnet and go to the peers instead (the default on iOS, which has no multicast entitlement); `0` broadcasts
+DM_NICK	player	The account nickname the game sees and local play shows to the other players (default `Player`; each device needs its own)
 DM_NRO	switch	`0` turns off loading of the NRO modules the game's NRR files register (on by default): every `nn::ro::LoadModule` then fails
 DM_NVN_ALLOCPROF	diagnostic	`=1` charges Metal allocation growth to each replayed op type and function, and logs command allocator sizes and each new texture (serial, size, format, storage)
 DM_NVN_API	switch	`=<major>.<minor>` overrides the NVN API version `nvnDeviceGetInteger` reports (by default decided by the SDK version or the profile's `device_api`: 55.15 for SDK 11 and later, 53.313 before)
@@ -191,6 +204,7 @@ DM_OODLE_JOB	path	`=<job file>`: the host runs the game's own Oodle decoder on e
 DM_OODLE_MODULES	path	The rewritten modules the Mac host's Oodle tool mode loads when `shader_split.py` decodes Trinity packs; set by the NSP script
 DM_OODLE_SERVE	switch	`=1`: the host answers decode requests on stdin / stdout with the game's own Oodle (or LZ5) decoder from the guest main thread before the SDK starts, until stdin ends
 DM_OPMODE	player	The operation mode the game sees: `0` handheld, `1` console (default: the profile's `op_mode`, console unless set); read once at startup
+DM_PAD_AB	player	`nintendo` (default) keeps the Switch's face buttons (A right, B bottom); `xbox` puts A at the bottom and B on the right, as Xbox and PlayStation controllers print them, on the touch gamepad and on physical controllers (Mac and iOS); launcher setting
 DM_PAD_MERGE	switch	`=1` merges every controller into player 1, as before, instead of giving each controller a player of its own (Mac and iOS)
 DM_PATCH_FRONT	switch	`=<bytes>`: the size of the patch area right before the module base for a long text (`BIG_TEXT`); set only by the rewriter's own rerun with the size it needs
 DM_PHONE_MOTION	switch	On iOS, whether the phone's own device motion drives player 1's six-axis sensor: `auto` (default) while no controller supplies fresh motion, `1` phone only, `0` never; each source keeps its own orientation
@@ -301,8 +315,14 @@ DM_TEST_UP_LOST	diagnostic	`=<batch index>` treats that batch of uploads as drop
 DM_THERMAL_CAP	switch	`0` turns off the thermal cap, which holds the frame step at 30 fps while iOS reports a serious or critical thermal state (on by default)
 DM_THR	diagnostic	`=1` logs each SVC (except `SleepThread`) with its first four arguments, and each `CreateThread` with entry, stack, priority and core
 DM_THRCPU	diagnostic	`=<tsv path>[,<seconds>]` writes each thread's CPU time (100% = one core) and the total every interval (default 10 s); on iOS a relative path is under `Documents`
-DM_TOUCH_HAPTICS	player	`0` turns off the light haptic tap when a touch control is pressed (on by default); launcher setting
+DM_TOUCH_HAPTICS	player	`0` turns off the light haptic tap when a touch control is pressed (on by default); `2` adds a softer tap when it is released; launcher setting
+DM_TOUCH_HAPTICS_GAIN	player	`=0.2..2` the touch feedback's strength (default `1`, the light tap; above `1` a firmer, medium tap, strongest at `2`); launcher setting
+DM_TOUCH_LEFT_DEADZONE	player	Radial dead zone for the left touch stick, `0`–`0.4` (default `0.1`); launcher setting
 DM_TOUCH_LOG	diagnostic	`=1` logs each touch-screen read with touch points (sample, finger, position, attributes) and each gesture entry, up to 500 lines
+DM_TOUCH_RIGHT_AREA	player	Camera touch-start region in the 3D layout, of the controls area: `third` (default) or `half`; other controls keep priority; launcher setting
+DM_TOUCH_STICK	player	`float` makes the on-screen left stick float: a touch on the left half of the controls area holds it, centred where it lands and dragged along past its radius; `fixed` (default) keeps the ring in its corner (or where the posture profile puts it); launcher setting
+DM_TOUCH_SWIPE	player	`=1` uses finger velocity for the 3D touch camera instead of a floating right stick (default `0`); game camera limits still apply; launcher setting
+DM_TOUCH_SWIPE_GAIN	player	Sensitivity multiplier for swipe-camera mode, `0.25`–`4` (default `1`); launcher displays 25–400%; launcher setting
 DM_UDC_SELFTEST	diagnostic	`=1` runs a start-up check of DontCare load and store on private depth-stencil and RGBA8 textures (clear, Load + DontCare, read back) and logs one result line
 DM_UE_SHADERS	path	Folder of the Unreal shader code archives decoded by `uepak.py`, for `shader_split.py` (default `ue_shaders` beside the RomFS); needed when the RomFS has Unreal paks
 DM_UE_TEXTURE_POOL	switch	Megabytes Unreal's texture streaming pool (`r.Streaming.PoolSize`) is raised to, overriding the profile's `ue_texture_pool`; `0` keeps the game's own pool. On iOS only this switch turns it on (`Documents/env.txt`)

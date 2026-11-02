@@ -2045,6 +2045,67 @@ def sarc_members(d, label='SARC'):
         nm = d[names + (attr & 0xffffff) * 4:].split(b'\0')[0].decode('utf-8', 'replace') if attr >> 24 else f'#{i}'
         yield nm, d[doff + s:doff + e]
 
+def camelot_lz(d, start, size, label):
+    """Camelot's LZ (Mario Tennis Aces main+0x20b3b8): a flag byte whose negation, read from its top bit, gives eight items, 0 a literal byte and 1 a reference
+    {b0, b1[, b2[, b3]]}: distance (b0 >> 4 | b1 << 4), length b0 & 0xf when that is 2 or more, else b2 + 0x10 (0) or (b3 << 8 | 0xff) + b2 + 0x11 (1); distance 0 ends the data.
+    A flag byte of 0 is eight literals"""
+    out = bytearray(); i, n = start, len(d)
+    while i < n and len(out) < size:
+        b = d[i]
+        if not b: out += d[i + 1:i + 9]; i += 9; continue
+        i += 1; f = (-b & 0xff) << 24 | 0x800000
+        while True:
+            if not f & 0x80000000:
+                if i >= n: break
+                out.append(d[i]); i += 1; f = f << 1 & 0xffffffff; continue
+            f = f << 1 & 0xffffffff
+            if not f or i + 2 > n: break
+            b0, b1 = d[i], d[i + 1]; dist = b0 >> 4 | b1 << 4; k = b0 & 0xf
+            if not dist: return bytes(out)
+            if k > 1: ln = k; i += 2
+            elif not k: ln = d[i + 2] + 0x10; i += 3
+            else: ln = (d[i + 3] << 8 | 0xff) + d[i + 2] + 0x11; i += 4
+            if dist > len(out): red(f'{label}: LZ reference {dist} bytes back at {len(out):#x}')
+            for _ in range(ln): out.append(out[-dist])
+    if len(out) != size: red(f'{label}: LZ data decodes to {len(out):#x} bytes, its header says {size:#x}')
+    return bytes(out)
+
+def narc_member(m, label):
+    """One member of a Camelot NARC (Mario Tennis Aces), as main+0x20c284 unpacks it by its first byte: 0x10 / 0x20 / 0x70 zlib and 0x30 raw deflate after a 16-byte header,
+    0x50 / 0x60 Camelot's LZ (the size big-endian at +4 and the data at +8, or the size in bytes 1-3 and the data at +4), 0x80 stored after the header, 0x94 an LZ4 block
+    (the size at +4, the data at +8). Anything else is stored as it is (the game copies it)"""
+    t = m[:1]
+    if t in (b'\x10', b'\x20', b'\x30', b'\x70'):
+        try: return zlib.decompressobj(-15 if t == b'\x30' else 15).decompress(m[16:])
+        except zlib.error as e: red(f'{label}: NARC member type {t.hex()}: {e}')
+    if t == b'\x50' and len(m) >= 8: return camelot_lz(m, 8, int.from_bytes(m[4:8], 'big'), label)
+    if t == b'\x60' and len(m) >= 4: return camelot_lz(m, 4, int.from_bytes(m[1:4], 'little'), label)
+    if t == b'\x80': return m[16:]
+    if t == b'\x94' and len(m) >= 8:
+        import lz4.block
+        return lz4.block.decompress(m[8:], uncompressed_size=struct.unpack_from('<I', m, 4)[0])
+    return m
+
+def narc_members(d, label='NARC'):
+    """(name, bytes) of each member of a NARC (Camelot's, Mario Tennis Aces: the Nitro archive layout with the magic 'NARC'): sections BTAF (member ranges in GMIF), BTNF
+    (names, length-prefixed, in member order) and GMIF (the data); each member is unpacked by narc_member. 2,262 of its files are NARCs (.narc, .ntex, .nptl, some .bin), and
+    the models' and effects' BNSH are in their compressed members"""
+    hl, nsec = field(d, '<HH', 0xc, f'{label} NARC header'); o, secs = hl, {}
+    for _ in range(nsec):
+        mg, sz = d[o:o + 4], field(d, '<I', o + 4, f'{label} NARC section')[0]
+        if sz < 8: red(f'{label}: NARC section {mg!r} of {sz} bytes')
+        secs[mg] = (o, sz); o += sz
+    if not {b'BTAF', b'BTNF', b'GMIF'} <= secs.keys(): red(f'{label}: NARC sections {sorted(secs)}')
+    fo, gm = secs[b'BTAF'][0], secs[b'GMIF'][0] + 8
+    n = field(d, '<I', fo + 8, f'{label} BTAF')[0]
+    names, no = [], secs[b'BTNF'][0] + 8 + field(d, '<I', secs[b'BTNF'][0] + 8, f'{label} BTNF')[0]
+    while len(names) < n and no < len(d) and 0 < d[no] < 0x80: names.append(d[no + 1:no + 1 + d[no]].decode('utf-8', 'replace')); no += 1 + d[no]
+    for i in range(n):
+        s, e = field(d, '<II', fo + 12 + 8 * i, f'{label} BTAF entry')
+        if not s <= e <= len(d) - gm: red(f'{label}: NARC member {i} at {s:#x}..{e:#x} lies outside its data')
+        nm = names[i] if i < len(names) else f'#{i}'
+        yield nm, narc_member(d[gm + s:gm + e], f'{label}/{nm}')
+
 NV_STAGES = ['vs', 'ps', 'gs', 'hs', 'ds', 'cs']   # NVN stage order
 COMMON, TREES = None, {}   # Unity common strings and borrowed type trees (given when the pool starts)
 ZDICTS, _ZD = {}, {}       # zstd dictionaries by ID (given when the pool starts) and their digested form in this process
@@ -2239,7 +2300,10 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
             # member point at the same inner archive, its work doubling with each level. Two budgets of NEST times the file bound the work: left[0], the members a file's archives open,
             # each counted by what it takes up in its archive, and left[1], what its Yaz0 members expand to. Counting a Yaz0 member by what it expands to in the first budget paid twice
             # for the same bytes, once for the member and once for its members (GitHub issue #640: Mario Kart 8 Deluxe's UI/<lang>/race.sarc, 204 KB, holds one layout archive
-            # that expands 9 times, which then added up to 18 times the file)
+            # that expands 9 times, which then added up to 18 times the file). For the same reason an archive's members do not pay again for the bytes the archive itself paid for:
+            # opening it gives back what it took up, so the budget counts what its members add (overlap, and what its Yaz0 or zstd members expand to), not each level of nesting
+            # once more (Super Mario Maker 2's Pack/Layout*.pack: Yaz0 layouts expanding 9 to 13 times, each holding one .arc archive whose members are as large again; 19 to 25 times
+            # the file when every level was counted)
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
     if d[:8] == SUMO_MUX:
@@ -2257,17 +2321,31 @@ def scan_blob(d, label, out, depth=0, left=None):
             left[1] -= int.from_bytes(d[4:8], 'big')
             if left[1] < 0: red(f'{label}: the Yaz0 archive members expand to more than {NEST} times the file')
         d = yaz0(d, label)
-    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 may expand to
+    paid = 0   # what this member took from the first budget, given back when it is an archive whose members are opened
+    if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 and zstd members may expand to
     else:
-        left[0] -= stored
+        left[0] -= stored; paid = stored
         if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
+    if d[:4] == ZSTD_MAGIC:   # a zstd member (Super Mario Maker 2's SARC members): decompressed before it is read
+        did = zs_dict_id(d)
+        d = unzs_dict(d, did, label) if did else zstd_mod().decompress(d)
+        if paid:   # charged like a Yaz0 member, by what it expands to
+            left[1] -= len(d)
+            if left[1] < 0: red(f'{label}: the zstd archive members expand to more than {NEST} times the file')
     if d[:4] == b'SARC':
+        left[0] += paid
         for nm, m in sarc_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
+        return
+    if d[:4] == b'NARC' and d[4:6] == b'\xfe\xff':
+        members = list(narc_members(d, label))
+        left[0] += NEST * sum(len(m) for _, m in members)   # as with SUMO's, the budget is of what the members decode to (a 2 MB texture of one colour packs to a few KB)
+        for nm, m in members: scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
         return
     if d[:4] == b'BAHS': out.extend(bahs_shaders(d, label)); return
     if d[:len(TFXO)] == TFXO: out.extend(tfxo_shaders(d, label)); return
     if d[:4] == b'MSHD': out.extend(mshd_shaders(d, label)); return
     if d[:4] == PGDAT and len(d) >= 0x1c and (mem := pgdat_members(d, label)) is not None:   # PlatinumGames
+        left[0] += paid
         for nm, m in mem: scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
         return
     if d[:4] in PG_STAGES and len(d) >= 0x18 and d[(o := struct.unpack_from('<I', d, 0xc)[0]):o + 4] == CTL_MAGIC: out.extend(pg_shader(d, label)); return
@@ -2498,7 +2576,7 @@ def scan_file_in(args):
         try: pairs = unity_shaders(d, '/' + rel, found, trees if not TREES else dict(TREES))
         except unityfs.NoTree: return rel, {}, set(), 'defer'
         return rel, uniq_keys(found), var_pairs(found) | {(a, b, 'prog') for a, b in pairs}, trees
-    elif b'BNSH\0\0\0\0' not in d and b'BAHS' not in d and d[:4] != b'MSHD' and not (d[:4] == b'SARC' and b'Yaz0' in d) and b'\x91\x68\x86\x19' not in d and MGFX not in d and NEEDLE not in d and d[:8] != SUMO_MUX and SUMO_NX not in d and NVNSH not in d: return rel, {}, set(), {}   # a SARC may hold Yaz0 members
+    elif b'BNSH\0\0\0\0' not in d and b'BAHS' not in d and d[:4] not in (b'MSHD', b'SARC') and d[:6] != b'NARC\xfe\xff' and b'\x91\x68\x86\x19' not in d and MGFX not in d and NEEDLE not in d and d[:8] != SUMO_MUX and SUMO_NX not in d and NVNSH not in d: return rel, {}, set(), {}   # a SARC may hold compressed members (Yaz0, zstd) whose shader magic is not visible yet; a NARC its own
     else:
         scan_blob(d, '/' + rel, found)
         # whole GLSLC outputs in a file no other reader takes (FINAL FANTASY TACTICS - The Ivalice Chronicles: its engine's technique files, resources_nx/…/shader/*.tec, 261 outputs beside

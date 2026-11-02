@@ -186,9 +186,9 @@ Most service calls can be found before they crash, before the first boot or the 
 
 - **Symptom:** abort in `fs::detail::GetFileSystemProxyServiceObject` under `fs::QueryMountSystemDataCacheSize` (`main+0x8f23bc`).
 - **Cause:** the game mounts system data 0100000000000802, MiiModel, as `MiiResource:` and reads `NXTexture{Low,Mid}{Linear,SRGB}.dat` and `Shape{Mid,High}.dat` whole; the SDK's Mii rendering is linked into `main` (`main+0x8f1400`–`+0x8fc000`).
-- **Fix:** firmware content is not the host's to ship, so the host writes a stand-in of the same layout with every part empty (`dm_mii_standin` in `hle_mii.c`, mounted by `hle_fs.c` `MountSystemData`; any other system data answers "target not found"). Heads build and draw nothing; bodies and favourite colours show.
-- **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (4.0.0, SDK 4.4.0; one boot).
-- **Note:** the layout as the code reads it: texture file +0xc the largest decompressed size of each of 11 part kinds, +0x38 their alignments, from +0x64 one 0x1c-byte entry per part (offset, size, stored size, 4 zlib parameters, then width, height, format, mips); shape file +0xc / +0x3c the same for 12 kinds, from +0x6c one 0x58-byte entry per part (offset, size, stored size, parameters, five vertex attribute offsets and sizes, index offset and byte size, bounding box), then hair (132 × 0x48, +0x12704) and faceline (12 × 0x24, +0x14c24) transforms. A texture of size 0 is skipped (`main+0x8faaf4`); shapes cannot all be absent, because the faceline is drawn without a check (a null buffer read at `main+0xa690d0` under `main+0x8286c4`), so every shape entry points at one shared mesh of one vertex and the triangle (0, 0, 0), 32 bytes of zeros in a stored zlib block. The largest sizes must not be 0: they size the model's memory pool (`main+0x8f2e6c`), whose alignment is the first one. The Mii database itself: [Mii database answered by the host](#mii-database-answered-by-the-host).
+- **Fix:** firmware content is not the host's to ship, so the host writes a stand-in of the same layout with blank parts (`dm_mii_standin` in `hle_mii.c`, mounted by `hle_fs.c` `MountSystemData`; any other system data answers "target not found"). Heads build and draw nothing; bodies and favourite colours show. Every texture entry points at one shared blank 16 × 16 `R8_Unorm` image (0x100 zero bytes in a stored zlib block): with textures absent, Super Mario Maker 2's Course World faulted in `nvnTextureGetFlags` on a null texture registered as `MiiCharModelTexture` (`main+0x2ecf98` under `main+0x1403690`), because the CharModel builds its mask render target only when the hair type's hat texture exists (`main+0x231570`–`+0x2315cc`), while `GetTexture(1)` (`main+0x232ebc`) checks only the creation flags. The decompressed size must not exceed the storage nn::gfx reserves for the texture, into which it is inflated (`main+0x23abc0`).
+- **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (4.0.0, SDK 4.4.0; one boot); the blank textures on [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md) 3.0.3 (Mario Kart 8 Deluxe not rerun since).
+- **Note:** the layout as the code reads it: texture file +0xc the largest decompressed size of each of 11 part kinds, +0x38 their alignments, from +0x64 one 0x1c-byte entry per part (offset, size, stored size, 4 zlib parameters, then u16 width / height at +0x14, format index at +0x18 (0 → nn::gfx `R8_Unorm` 0x201), mips at +0x19, tile mode index at +0x1a (0 optimal, 1 linear)); shape file +0xc / +0x3c the same for 12 kinds, from +0x6c one 0x58-byte entry per part (offset, size, stored size, parameters, five vertex attribute offsets and sizes, index offset and byte size, bounding box), then hair (132 × 0x48, +0x12704) and faceline (12 × 0x24, +0x14c24) transforms. A texture of size 0 is skipped (`main+0x8faaf4`); shapes cannot all be absent, because the faceline is drawn without a check (a null buffer read at `main+0xa690d0` under `main+0x8286c4`), so every shape entry points at one shared mesh of one vertex and the triangle (0, 0, 0), 32 bytes of zeros in a stored zlib block. The largest sizes must not be 0: they size the model's memory pool (`main+0x8f2e6c`), whose alignment is the first one. The Mii database itself: [Mii database answered by the host](#mii-database-answered-by-the-host).
 
 ## Add-on content
 
@@ -339,6 +339,14 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** the host now recognizes gestures from the same touch points, by yuzu's rules plus an 8 px slop before a touch counts as moving (`hle_touch.c` `gesture_sample`, unit test `t_gesture`; only in handheld mode, as touches): Touch, Press after 0.5 s, Pan, Pinch / Rotate with two fingers, Cancel on a change in the finger count, then Tap (IsDoubleTap within 0.35 s), Swipe above 400 px/s or Complete, and Idle. For every game.
 - **Check:** every menu, the cards, the map's drag and flick worked by touch with it. `DM_TOUCH_LOG=1` logs each gesture entry, and a `DM_CTL` line `drag <x0> <y0> <x1> <y1> [seconds]` moves a finger for testing pans and swipes on the Mac.
 - **Found on:** [Taiko Risshiden V DX](../../dm/games/0100346017304000/README.md) (SDK 12.3.3, Koei Tecmo's KTGL).
+
+### Game touches confined to the visible picture
+
+- **Symptom:** touching unused space below the game on a portrait Duo can send a touch to the game's bottom edge; control grab regions can also intercept touches near the upper picture.
+- **Cause:** the full-window gamepad sent every unclaimed touch to the game and clamped its coordinates to the picture. In a split layout the controls region is outside that picture.
+- **Fix (resolved):** `hf_picture_hit` accepts new game touches only inside the displayed view; letterboxes, the lower controls region and the invisible crop overflow cannot start one. In portrait and tabletop, picture touches are routed before control hit testing. An accepted drag retains its touch ID and remains clamped when dragged outside the picture.
+- **Check:** HalfoldKit tests cover fit, stretch, crop, letterboxes and lower-screen touches. The iOS source compile check passes; physical fold transitions remain to be checked by the user.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md), during its Duo course-editor integration.
 
 ### Mouse, keyboard and key code maps
 
@@ -505,6 +513,29 @@ Most service calls can be found before they crash, before the first boot or the 
 
 ## Accounts, network, shop and parental controls
 
+### Network request confirmation returns a boolean
+
+- **Symptom:** an online menu silently declines to open before any DNS/socket call, although community networking has been enabled.
+- **Cause:** `nifm::HandleNetworkRequestErrorResult()` returns `bool`, not `nn::Result`. The SDK wrapper masks its return with one; the application likewise stores its low bit as the network confirmation outcome. Returning Result success (zero) means cancellation to that caller.
+- **Fix:** the offline implementation returns false; OCW's connected transport returns true and records the confirmation in the diagnostic log. The standalone test calls the actual import binding and requires bit zero to be set, while checking that SSL's Result-returning interface still uses zero for success.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md) (SDK 7.3.2).
+
+### Online login stops at the parental-control check
+
+- **Symptom:** with OCW enabled, tapping Course World does nothing; the log has no nifm, DNS, socket or TLS line.
+- **Cause:** the game's online login sequence (`State::cIdle`, `cWaitStartApplet`, `cCheckParentalControl`, `cLogin`, …) asks `pctl::CheckFreeCommunicationPermission(false)` on ParentalControlMgr's worker (main+0xd8c1d4, stored at mgr+0x2a1). `cCheckParentalControl` (main+0x15320e4) goes back to `cIdle` when it is false, before `cLogin` makes any network call; the offline table answers "never". Next in line, main+0xd44c8 builds `https://%s/` from `nsd::ResolveEx`'s output without checking its Result, and the offline `ResolveEx` fails without writing the output.
+- **Fix:** the OCW overlay answers the permission check true, and `nsd::ResolveEx` / `Resolve` pass `server.opencourse.world` through unchanged (as Horizon's nsd does for a name without `%`); any other name still fails, with an empty output. The offline table is unchanged for every other configuration.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md) 3.0.3 (SDK 7.3.2).
+
+### Opt-in Open Course World transport
+
+- **Symptom:** Super Mario Maker 2's Course World cannot open, even with an OCW configuration; the host reports the network unavailable and sockets/SSL fail.
+- **Cause:** the shared offline service policy deliberately has no network transport. An Atmosphere `subsdk9` cannot be dropped into an iOS native package: its runtime hooks must be represented by build-gated rewriting and host service bindings.
+- **Fix:** `hle_ocw.m` is an opt-in import overlay, installed before relocation only for main build `c2dc405ac414c37c8b1c50219c7a0f0c` with a valid `ocw-config.json` beside `DM_SAVE`. It implements the relevant SDK 7.3.2 C/C++ socket and SSL interfaces using Darwin sockets and SecureTransport, with translated IPv6 family values, thread-local errors, nonblocking TLS and Apple certificate/hostname verification. Potentially deep DNS/Security calls use the existing host-stack bridge. Other titles/configurations keep the offline table. Credentials remain private app data and are never logged or embedded in the executable.
+- **Client mod:** the game's profile applies the account/token and community-course policy changes from [OCW 0.3](https://github.com/opencourseworld/ocw-mod/blob/main/source/program/main.cpp), with original-byte assertions. Observation 22 runs after the header's `snprintf`, replacing the completed buffer with OCW authentication and version headers; registers remain read-only. The domain is replaced in writable rodata after a build/string check. The OCW profile exposes one deterministic local default Mii because this host cannot run the system editor.
+- **Validation:** `make -C dm/host/tests GAME=01009B90006DC000 ocw` checks offline isolation, resolver layout, header transformation, unchanged registers, loopback sockets, polling/nonblocking errors, descriptor lifetime and local Mii selection. Its optional `--live` mode checks DNS, verified TLS and HTTP against OCW without sending account credentials or running game code. A root HTTP 404 is only a transport check, not authenticated Course World success. Phone gameplay/server authentication still requires user validation.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md).
+
 ### Account, friends, play data and Nintendo Account calls
 
 - **Symptom:** a null read at `sdk+0x336ccc` in `pdm::QueryApplicationPlayStatistics` (Pokémon Sword, the second boot); undefined `nn::account::` / `nn::friends::` imports with no hook, found from the import list ([Listing a game's unhooked imports before they are met](#listing-a-games-unhooked-imports-before-they-are-met)) before they were met.
@@ -518,7 +549,7 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `nn::mii::Database` keeps an `IDatabaseService` of the mii service at +0 (`Database::Initialize`, `sdk+0x1c5664`), and `AppendMii` / `ShowMiiEdit` start the MiiEdit applet.
 - **Fix:** `hle_mii.c` takes over the public methods: a console with no Mii of its own (an empty database: no index, nothing to update) that still has the six default Miis every console has. A CharInfo the host builds is the default Mii's parameters with Switch common colours, a create ID with version 4 and variant bits (fixed per default Mii, so a saved choice finds the same Mii; fresh for `BuildRandom`, which the title's demo race calls for 12 racers) and the nickname "no name"; every field is within `CharInfoRaw::Verify`'s ranges (`sdk+0x1b68c8`). The Mii editor is cancelled (0xE7E, which `ShowMiiEdit` itself treats as success).
 - **Found on:** [Mario Kart 8 Deluxe](../../dm/games/0100152000022000/README.md) (4.0.0, SDK 4.4.0; one boot). The game asks for the default Miis with `Get(…, 6, SourceFlag 2)` and never reads the count (`main+0x81e954`): its boot-time list of Mii icons (`main+0x419dc8`) builds a head model for each of the six, and zeroed entries failed the model's `CharInfoAccessor::IsValid` (`CharModel::Initialize` returned 0xd67e, `main+0x8f15b0`) and crashed at `main+0x8f152c`.
-- **Note:** the heads' model data is a stand-in with every part empty ([System data stand-in for the MiiModel archive](#system-data-stand-in-for-the-miimodel-archive)).
+- **Note:** the heads' model data is a stand-in with every part blank ([System data stand-in for the MiiModel archive](#system-data-stand-in-for-the-miimodel-archive)).
 
 ### Shop service accessors
 
@@ -559,6 +590,25 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `Poll` and `Select` with nothing to wait on (no descriptors, or only negative ones, which POSIX ignores) now wait out their timeout and return 0, in every mangling the host takes over, including SDK 4's `Select(int, fd_set*, …, timeval*)`; an endless timeout returns 0 after 100 ms, since a thread inside a host hook pauses for IL2CPP's collector only once the hook returns (`hle_net.c`, `dm_guest_sleep_ns` in `hle_thread.c`).
 - **Found on:** [DARK SOULS: REMASTERED](../../dm/games/01004AB00A260000/README.md) (SDK 4.5.0; one boot). Guest CPU fell from 1,030 to 60 ms per second.
 
+### Local network play
+
+- **What:** with `DM_NET=lan` (the launcher's **Local play**, profile key `local_play`) the socket calls reach the LAN through the host's own sockets (`hle_sock.c`) and the game's local wireless runs over it (`hle_ldn.c`); without it every hook keeps its offline answer. Name resolution stays cut and only private ranges, link-local, 100.64/10 (a VPN) and the room's members are reachable, so online features still take their offline branch. `nifm` reports the LAN only with `DM_NET_NIFM=1` (a game's LAN mode); local wireless never asks it.
+- **Local wireless:** ldn_mitm's protocol, so a room is shared with a Switch running ldn_mitm and with Ryujinx's ldn_mitm mode: UDP 11452 finds rooms (Scan to the subnet broadcast and to `DM_NET_PEERS`; the host answers ScanResp with its `NetworkInfo` to the sender), TCP 11452 joins (Connect with the station's `NodeInfo`; the host sends `SyncNetwork` on every change). A 12-byte header (magic `0x11451400`), zero runs compressed. The SDK structs are the service's, so they go on the wire as they are. One host thread owns the sockets and signals the game's state change event (bound auto-clear).
+- **iOS:** an app without Apple's multicast entitlement can neither send nor receive broadcasts. So with `DM_NET_UNICAST=1` (the default on iOS) a scan goes as unicasts to every address of the subnet (up to 1,024, every 2 s) and to the peers, and a guest broadcast goes as unicasts to the room's nodes (`dm_net_set_room`). The generated `Info.plist` carries `NSLocalNetworkUsageDescription`.
+- **Socket errors are Linux's:** Horizon's bsd service takes FreeBSD's values (`sockaddr_in` with `sin_len`, `SOL_SOCKET 0xffff`, the `SO_` options, `MSG_` flags, poll bits) but reports Linux's error numbers, and `fcntl`'s `O_NONBLOCK` is Linux's `0x800` (as Ryujinx's bsd service). Smash's Pia polls its socket with `RecvFrom` and reads `GetLastErrno`: Darwin's `EAGAIN` (35, Linux's `EDEADLK`) made it drop the room at once, error 2618-0006.
+- **One user per console:** every host has the same fixed `Uid`, and Smash turns away a player whose user is already in the room ("cannot join"). With `DM_NET=lan` the low word of the `Uid` is the device ID (`dm_device_id`: `DM_DEVICE_ID`, else random once, kept in `~/Library/nxnative-device-id`); the save does not depend on it.
+- **Play history:** Smash asks for its `friends::GetPlayHistoryRegistrationKey` right after creating a room and closes it ("connection error") without one; with `DM_NET=lan` the key is made on the spot (random per run) and `AddPlayHistory` succeeds without keeping anything. `pctl`'s free-communication calls answer allowed.
+- **Room info follows the accept policy:** `SetStationAcceptPolicy` sends the room to the stations, as `SetAdvertiseData` does (Mario Tennis Aces closes participation when its host starts).
+- **Found on:** [Super Smash Bros. Ultimate](../../dm/games/01006A800016E000/README.md#local-play), [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md#local-play).
+- **Check:** `make -C dm/host/tests GAME=<id> net` (`t_sock`: the socket layer on loopback; `t_ldn`: a host and a station as two processes, the wire format, the offline answers).
+
+### `ldn::AttachStateChangeEvent` initializes its event each time
+
+- **Symptom:** abort as a local play room is created (`Break reason=0`, the backtrace through `nn::diag::detail::AbortImpl` from `nn::os::TimedWaitSystemEvent`), after a room this console had joined was closed by its host.
+- **Cause:** the SDK's `TimedWaitSystemEvent` aborts unless the event's state byte (+0x28 on SDK 4) says it is initialized. The station had finalized ldn, reset the object holding the state change event without `DestroySystemEvent` (its state back to 0, its handles never closed), initialized ldn again and attached the same address. The host's binding table still held that address from the first Attach, so `hle_bind_system_event` returned early and the event stayed uninitialized.
+- **Fix:** an Attach drops the binding left at that address and creates a new kernel event (`hle_rebind_system_event` in `hle_thread.c`, used by `h_ldn_Attach`).
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md#local-play) (the iPhone after its host crashed; reproduced on the Mac by killing the host's process, `run/lan_hostgone.sh` in the work folder).
+
 ## Settings, languages and fonts
 
 ### Language codes
@@ -586,6 +636,13 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Fix:** `oe::GetRegionCode` answers from the language: Japan, the Americas, Europe or Hong Kong / Taiwan / Korea.
 - **Found on:** [Animal Crossing: New Horizons](../../dm/games/01006F8002326000/README.md) (SDK 20.5.4; found in `main`'s imports before the first boot).
 
+### Font engine heap sized for the console's own shared font
+
+- **Symptom:** crash at address 0x38 right after the shared fonts load, on the "?" glyph lookup (`main+0x599e14`); `ScalableFontEngine::LoadFont` returns error 201 (out of memory) for some engines.
+- **Cause:** `ScalableFontEngine::Initialize(work, size)` hands the engine (iType) its whole heap, and `LoadFont` takes the font's tables from it. Games size it for the console's standard font; the host's stand-in (macOS's Arial Unicode, 22 MB and about 50,000 glyphs) needs more than 50 KB and less than 64 KB.
+- **Fix:** an engine given less than 256 KB works in a host buffer of 256 KB (`h_font_Init` in `hle_sdk16.c`); `GetPointerToWorkBuffer` answers the game's own buffer, which the game frees after `Finalize`, and `Finalize` frees the host's.
+- **Found on:** [Mario Tennis Aces](../../dm/games/0100BDE00862A000/README.md) (a 512 KB glyph engine and 50 KB per-thread engines).
+
 ### Shared font address: BFTTF header or bare TTF
 
 - **Symptom:** the font engine runs on garbage; crash after the shared fonts load, looking up the "?" glyph (`main+0x6c73c0`, a font cache lookup returning null), with SDK 10's `ScalableFontEngine::LoadFont` failing with error 403 and `SetFont` with 301 on both stand-in fonts; or Japanese, Korean or Chinese text draws nothing in a Unity game while Latin text is fine (Patrick's Parabox's language menu showed three blank lines).
@@ -599,6 +656,15 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Check:** 3D World's case was found by probing the engine's error code after each call (`DM_PROBE` on the instruction after `GetError`).
 - **Note:** of the games on hand, the ones that call `GetSharedFontAddress` without importing `Decode` are all Unity players (Engage, Ace Attorney Investigations Collection, Brain Memory Training Academy, Patrick's Parabox). To see which fonts a Unity game asks for, probe its name mapper's entry (`DM_PROBE=main:2390b0` on Patrick's Parabox 1.0.1; the function is the one `main` caller of `GetSharedFontLoadState`).
 - **Found on:** [Super Mario 3D World + Bowser's Fury](../../dm/games/010028600EBDA000/README.md) (SDK 10, the plain TTF); [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md), [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md) (the `Decode` importers); [Patrick's Parabox](../../dm/games/0100E44016C22000/README.md) (the blank CJK text, 1.0.1); [Captain Toad: Treasure Tracker](../../dm/games/01009BF0072D4000/README.md) (SDK 8, plain TTFs); [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md), [Ace Attorney Investigations Collection](../../dm/games/010005501E68C000/README.md), [Brain Memory Training Academy](../../dm/games/0100F5D01DA3A000/README.md) (the other Unity players); The Legend of Zelda: Echoes of Wisdom 1.1.0 (no profile).
+
+### Missing private-use symbols in the shared-font stand-in
+
+- **Symptom:** Super Mario Maker 2 crashes at `main+0x243570`, reading NULL + `0x38` while preloading U+E06B. Font loading and `GetError` succeed, but `CheckGlyphExist` returns false for every eligible face and the game's glyph cache returns NULL.
+- **Cause:** the generated Nintendo extension font supplied only 46 code points. The original system symbol artwork is unavailable to the host; its stand-in did not cover private-use symbols beyond the implemented button icons.
+- **Fix:** `make_ext_font.py` preserves the existing button artwork and maps remaining BMP private-use characters to a visible question-mark symbol with a nonzero glyph ID. The game can cache and render that replacement without changing its glyph checks.
+- **Check:** `test_ext_font.py` verifies the complete private-use range, a drawable nonzero replacement, and preserved A-button mappings. The same boot passes the original crash site with the generated font.
+- **Open:** unsupported symbols display the replacement rather than their original artwork.
+- **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md), update 3.0.3.
 
 ### Shared fonts requested all at once
 

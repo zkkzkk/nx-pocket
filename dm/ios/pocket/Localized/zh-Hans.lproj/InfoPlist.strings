@@ -1,0 +1,3 @@
+/* NX Pocket's Info.plist words in Simplified Chinese */
+"CFBundleDisplayName" = "NX Pocket";
+"NSLocalNetworkUsageDescription" = "本地联机：查找并加入同一 Wi-Fi 下的其他设备。";

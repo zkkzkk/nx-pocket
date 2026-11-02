@@ -1,3 +1,5 @@
 Gen/
 DmIOS.xcodeproj/
 Sources/Info.plist
+LauncherPreview.xcodeproj/
+NXPocket.xcodeproj/

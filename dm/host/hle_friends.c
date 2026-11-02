@@ -2,6 +2,7 @@
 // Not cut: the getters of Friend / Profile / FriendPresence and the constructors of Friend / Profile / UserPresence (they only read and write the game's own objects and do not go through the service).
 // Return convention: Result returns RES_FAIL; bool returns false; event pointers get a SystemEvent that is bound to a kernel event and never fires.
 #include "hle.h"
+#include "hle_sock.h"
 
 // Notification event that never fires (GetSystemEvent-style calls return a pointer; bound on the guest thread on first use)
 static _Alignas(16) uint8_t g_ev_notify[0x100], g_ev_invite[0x100];
@@ -26,10 +27,25 @@ HLE_FORCE("_ZN2nn7friends14GetProfileListEPNS0_12AsyncContextEPNS0_7ProfileERKNS
           Result, h_fr_GetProfileList, void *ctx, void *out, const void *uid, const void *ids, int n) { (void)ctx; (void)out; (void)uid; (void)ids; (void)n; return RES_FAIL; }
 HLE_FORCE("_ZN2nn7friends16UpdateFriendInfoEPNS0_6FriendERKNS_7account3UidEPKNS3_23NetworkServiceAccountIdEi", "friend info update fails (cut)",
           Result, h_fr_UpdateFriendInfo, void *f, const void *uid, const void *ids, int n) { (void)f; (void)uid; (void)ids; (void)n; return RES_FAIL; }
-HLE_FORCE("_ZN2nn7friends14AddPlayHistoryERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameES6_", "play history is not registered (cut)",
-          Result, h_fr_AddPlayHistory, const void *k, const void *a, const void *b) { (void)k; (void)a; (void)b; return RES_FAIL; }
-HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyERKNS_7account3UidEb", "play history key unavailable (cut)",
-          Result, h_fr_GetPHKey, void *k, const void *uid, int local) { (void)k; (void)uid; (void)local; return RES_FAIL; }
+// Play history ("people you played with"): in local play each console hands the others its registration key, and they register it. Super Smash Bros. Ultimate asks for
+// its key right after creating a local wireless room and closes the room ("connection error") when it gets none, so with DM_NET=lan the key is made here, as the friends
+// service makes it offline on hardware, and registering one succeeds without keeping anything (offline: both cut, as before)
+typedef struct { uint16_t type; uint8_t key_index, user_bool, local_play, _r[3]; uint8_t uuid[16]; uint8_t hmac[32]; uint8_t _r2[8]; } ph_key;   // 0x40 bytes
+_Static_assert(sizeof(ph_key) == 0x40, "PlayHistoryRegistrationKey");
+// The key names this console's user: every host has the same fixed Uid (hle_account.c), so the key carries one random per run instead, and two consoles never share one
+static ph_key g_ph; static pthread_once_t g_ph_once = PTHREAD_ONCE_INIT;
+static void ph_make(void) { arc4random_buf(g_ph.uuid, sizeof g_ph.uuid); arc4random_buf(g_ph.hmac, sizeof g_ph.hmac); }
+HLE_FORCE("_ZN2nn7friends14AddPlayHistoryERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameES6_", "play history is not registered (cut; DM_NET=lan: accepted, not kept)",
+          Result, h_fr_AddPlayHistory, const void *k, const void *a, const void *b) { (void)k; (void)a; (void)b; return dm_net_on() ? RES_OK : RES_FAIL; }
+HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyERKNS_7account3UidEb", "play history key unavailable (cut; DM_NET=lan: made on the spot)",
+          Result, h_fr_GetPHKey, void *k, const void *uid, int local) {
+    (void)uid;
+    if (!dm_net_on()) return RES_FAIL;
+    pthread_once(&g_ph_once, ph_make);
+    ph_key out = g_ph; out.type = 0x101; out.user_bool = 1; out.local_play = local & 1;
+    memcpy(k, &out, sizeof out);
+    return RES_OK;
+}
 // Notification queue
 HLE_FORCE("_ZN2nn7friends17NotificationQueueC1Ev", "notification queue creates no session (cut)", void, h_fr_NqCtor, void *self) { (void)self; }
 HLE_FORCE("_ZN2nn7friends17NotificationQueueD1Ev", "notification queue has no session to close (cut)", void, h_fr_NqDtor, void *self) { (void)self; }

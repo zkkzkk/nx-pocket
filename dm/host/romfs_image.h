@@ -26,11 +26,13 @@ static int romfs_image_read(int fd, void *buf, size_t size, off_t off) {
     return 1;
 }
 // NULL for an incomplete or invalid image (errno EINVAL), an I/O error, or allocation failure. The caller owns the descriptor and index on success.
-static romfs_img *romfs_image_open(const char *path) {
+// len: the image is the file's first len bytes (a single-file game pack, format 3: the image first, the pack's other parts after it); 0: the whole file
+static romfs_img *romfs_image_open_len(const char *path, uint64_t len) {
     int fd = open(path, O_RDONLY); struct stat st; uint8_t h[32]; romfs_img *m = NULL; uint64_t ioff, isz, n;
     if (fd < 0) return NULL;
     if (fstat(fd, &st) || !romfs_image_read(fd, h, sizeof h, 0)) goto bad;
     errno = EINVAL;
+    if (len) { if (len > (uint64_t)st.st_size) goto bad; st.st_size = (off_t)len; }   // the index then ends at len, not at the end of the file
     if (memcmp(h, "DMROMFS1", 8) || st.st_size < (off_t)sizeof h) goto bad;
     memcpy(&ioff, h + 8, 8); memcpy(&isz, h + 16, 8); memcpy(&n, h + 24, 8);
     if (!n || n > UINT32_MAX || ioff < sizeof h || ioff > (uint64_t)st.st_size || isz != (uint64_t)st.st_size - ioff || isz > SIZE_MAX || n > isz / sizeof(img_ent)) goto bad;
@@ -70,3 +72,4 @@ bad: {
     errno = e; return NULL;
     }
 }
+static romfs_img *romfs_image_open(const char *path) { return romfs_image_open_len(path, 0); }

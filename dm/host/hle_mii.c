@@ -49,6 +49,9 @@ static void mii_default(mii_charinfo *c, int gender, int index) {
     c->mole_scale = 4; c->mole_x = 2; c->mole_y = 20;
 }
 
+// Deterministic local avatar for a community-network profile without the system editor.
+void dm_mii_default_profile(void *out) { mii_default(out, 0, 0); }
+
 // The object keeps its service pointer at +0, which the constructor zeroes and the destructor releases through its vtable when set; the host never sets it
 HLE_FORCE("_ZN2nn3mii8Database10InitializeEv", "mii:u service; the host's database: the six default Miis, none of the console's own", Result, h_mii_Init, void *self) {
     (void)self; LOG("mii: Database::Initialize (the six default Miis, none of the console's own)"); return RES_OK;
@@ -105,15 +108,29 @@ HLE_FORCE("_ZNK2nn3mii8Database6ExportEPvm", "mii:u service; nothing to export",
 //   shape file: +0x0c the 12 largest sizes, +0x3c their alignments, from +0x6c one 0x58-byte entry per part (offset, size, stored size, zlib parameters, five vertex attribute offsets
 //     and sizes, index offset and size, bounding box), beards 4, facelines 12, masks 12, hats / foreheads / hair in normal and cap form 132 each, glasses 1, noses 18, noselines 18
 //     (main+0x8faee8); then the hair transforms (132 × 0x48, +0x12704) and faceline transforms (12 × 0x24, +0x14c24).
-// A texture whose size is 0 is skipped when the model is built (main+0x8faaf4); the model's own render targets (face, mask) do not come from the file. Shapes cannot all be absent: the
-// faceline is drawn without a check (its position buffer, main+0x8286c4: a null buffer read at main+0xa690d0), so every shape entry points at one shared mesh, one vertex at the origin
-// (attribute 0, the position: 4 halves) and the triangle (0, 0, 0) (u16 indices at +0x10), 0x20 bytes of zeros inflated with nn::util::DecompressZlib, stored here as one raw deflate block.
-// It builds, and draws nothing. The largest sizes size the model's memory pool (main+0x8f2e6c) and the first alignment is that pool's alignment, so they are one page each instead of 0.
-// The first 12 bytes of each header are not read
-enum { MII_TEX_SIZE = 0x64 + 0x1c * 327, MII_SHAPE_TABLES = 0x6c + 0x58 * 857 + 0x48 * 132 + 0x24 * 12, MII_MESH_AT = 0x14de0, MII_MESH = 0x20 };
+// Textures cannot be absent either: a part of size 0 is skipped when the model is built (main+0x8faaf4), but a render target that needs one is then never created, and the getter still
+// hands it out. Super Mario Maker 2 3.0.3 builds the mask target (CharModel +0x150) only when the hat texture of the hair type exists (main+0x231570..+0x2315cc, likewise the noseline
+// +0x278 and glasses +0x3a0), while GetTexture(1) (main+0x232ebc) checks only the creation flags; Course World registers that texture (main+0x1403690) and its null NVN texture faults.
+// So every texture entry points at one shared 16 × 16 R8_Unorm optimal-tiled image, one mip (format index 0 → nn::gfx 0x201, main+0x23af2c), 0x100 bytes of zeros: no larger than the
+// storage nn::gfx reserves for it, which is what the data is inflated into (main+0x23abc0). The model's own render targets (face, mask) do not come from the file. Shapes cannot all be
+// absent: the faceline is drawn without a check (its position buffer, main+0x8286c4: a null buffer read at main+0xa690d0), so every shape entry points at one shared mesh, one vertex
+// at the origin (attribute 0, the position: 4 halves) and the triangle (0, 0, 0) (u16 indices at +0x10), 0x20 bytes of zeros inflated with nn::util::DecompressZlib, stored here as one
+// raw deflate block. It builds, and draws nothing. The largest sizes size the model's memory pool (main+0x8f2e6c) and the first alignment is that pool's alignment, so they are one page
+// each instead of 0. The first 12 bytes of each header are not read
+enum { MII_TEX_SIZE = 0x64 + 0x1c * 327, MII_SHAPE_TABLES = 0x6c + 0x58 * 857 + 0x48 * 132 + 0x24 * 12, MII_MESH_AT = 0x14de0, MII_MESH = 0x20, MII_TEXEL_AT = 0x2430, MII_TEXEL = 0x100 };
 _Static_assert(MII_TEX_SIZE == 0x2428 && MII_SHAPE_TABLES == 0x14dd4, "MiiModel stand-in layout");
 static const uint8_t mii_mesh_z[] = {0x78, 0x01, 0x01, MII_MESH, 0, (uint8_t)~MII_MESH, 0xff, [7 ... 7 + MII_MESH - 1] = 0, 0x00, MII_MESH, 0x00, 0x01};   // zlib: stored block, Adler-32 of 32 zeros
-enum { MII_SHAPE_SIZE = MII_MESH_AT + sizeof mii_mesh_z };
+static const uint8_t mii_texel_z[] = {0x78, 0x01, 0x01, 0x00, 0x01, 0xff, 0xfe, [7 ... 7 + MII_TEXEL - 1] = 0, 0x01, 0x00, 0x00, 0x01};   // the same for 256 zeros
+enum { MII_SHAPE_SIZE = MII_MESH_AT + sizeof mii_mesh_z, MII_TEXTURE_SIZE = MII_TEXEL_AT + sizeof mii_texel_z };
+static void mii_textures(uint8_t *b) {
+    for (int i = 0; i < 327; i++) {
+        uint8_t *e = b + 0x64 + 0x1c * i;
+        uint32_t at[3] = {MII_TEXEL_AT, MII_TEXEL, sizeof mii_texel_z}; memcpy(e, at, sizeof at);   // data offset, inflated size, stored size
+        uint16_t wh[2] = {16, 16}; memcpy(e + 0x14, wh, sizeof wh);
+        e[0x18] = 0; e[0x19] = 1; e[0x1a] = 0;                                                      // format R8_Unorm, one mip, optimal tiling
+    }
+    memcpy(b + MII_TEXEL_AT, mii_texel_z, sizeof mii_texel_z);
+}
 static void mii_shapes(uint8_t *b) {
     for (int i = 0; i < 857; i++) {
         uint32_t *e = (uint32_t *)(b + 0x6c + 0x58 * i);
@@ -128,6 +145,7 @@ static int mii_write(const char *dir, const char *name, int parts, size_t size) 
     uint8_t *b = calloc(1, size); FILE *f = fopen(p, "wb");
     for (int i = 0; b && i < parts; i++) { uint32_t page = 0x1000; memcpy(b + 0xc + 4 * i, &page, 4); memcpy(b + 0xc + 4 * parts + 4 * i, &page, 4); }
     if (b && parts == 12) mii_shapes(b);
+    if (b && parts == 11) mii_textures(b);
     int ok = b && f && fwrite(b, 1, size, f) == size;
     if (f && fclose(f)) ok = 0;
     free(b);
@@ -143,9 +161,9 @@ int dm_mii_standin(const char *dir) {   // written once per process (the query a
     mkdir(p, 0755);
     static const char *tex[] = {"NXTextureLowLinear.dat", "NXTextureLowSRGB.dat", "NXTextureMidLinear.dat", "NXTextureMidSRGB.dat"}, *shape[] = {"ShapeMid.dat", "ShapeHigh.dat"};
     int ok = 1;
-    for (int i = 0; i < 4; i++) ok &= mii_write(dir, tex[i], 11, MII_TEX_SIZE);
+    for (int i = 0; i < 4; i++) ok &= mii_write(dir, tex[i], 11, MII_TEXTURE_SIZE);
     for (int i = 0; i < 2; i++) ok &= mii_write(dir, shape[i], 12, MII_SHAPE_SIZE);
-    LOG("mii: MiiModel system data is the host's stand-in (no textures, every shape one degenerate triangle: Mii heads draw nothing) in %s", dir);
+    LOG("mii: MiiModel system data is the host's stand-in (every texture one blank 16 x 16, every shape one degenerate triangle: Mii heads draw nothing) in %s", dir);
     done = ok ? 1 : -1;
     pthread_mutex_unlock(&mu);
     return ok;

@@ -107,3 +107,7 @@ int main(void) {
     puts("NRO relocation, load order, lifecycle, weak symbols and refusal: OK");
     return 0;
 }
+
+// These tests isolate the offline loader, without a community-network configuration.
+void *dm_ocw_resolve(const char *name) { (void)name; return NULL; }
+void dm_ocw_install(void) {}

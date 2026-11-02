@@ -46,6 +46,7 @@ module_t *g_mod;
 int g_nmod;
 uint64_t g_t0_ns;
 __thread _Atomic int dm_host_work;
+void (*dm_host_block_hook)(int);   // defined by the graphics host in a full build (core_lock)
 pthread_key_t g_key18;
 void crash_thread_init(void) {}
 void guest_thread_init(void) {}

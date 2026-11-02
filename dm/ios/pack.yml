@@ -1,0 +1,42 @@
+# A game pack's library (xcodegen; dm/ios/tools/build_pack.py writes Gen/ and runs it): the game app's sources (project.yml) built as a framework that NX Pocket (dm/ios/pocket)
+# loads with dlopen and starts with dm_pack_start (main.m, DM_PACK). The launcher's Swift sources stay out (NX Pocket shows the launcher), and so do the resources: the pack carries
+# them beside the library (pack.json, dm/, romfs.img, msl/, aoc/, pso/). iOS loads only a library signed by the same team as the app that loads it.
+name: GamePack
+options:
+  deploymentTarget:
+    iOS: "26.0"
+configFiles:     # the game app's generated settings (gen_build.py's header paths and frameworks, the embedded segments' link flags), with this checkout's paths
+  Release: Gen/dm.xcconfig
+  Debug: Gen/dm.xcconfig
+targets:
+  Game:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes: [Info.plist, "*.swift", "DmIOS-Bridging-Header.h", "LauncherFold.m", "PackSign.c"]   # the launcher's and NX Pocket's own: NX Pocket has them (two copies of an Objective-C class clash)
+      - path: Gen/embed.S
+      - path: Gen/src
+      - path: Gen/main/main.c
+        compilerFlags: "-Dmain=dm_main"
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}
+      PRODUCT_NAME: Game
+      GENERATE_INFOPLIST_FILE: YES
+      DEFINES_MODULE: NO
+      SKIP_INSTALL: YES
+      DEVELOPMENT_TEAM: ${DM_TEAM_ID}
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: ""             # the app that loads the pack has the entitlements (Increased Memory Limit); a library carries none
+      GCC_PREPROCESSOR_DEFINITIONS: $(inherited) DM_PACK=1
+      SYMROOT: $(DM_XCODE_OUTPUT_ROOT)/Build/Products
+      OBJROOT: $(DM_XCODE_OUTPUT_ROOT)/Build/Intermediates.noindex
+      CONFIGURATION_BUILD_DIR: $(DM_XCODE_OUTPUT_ROOT)/Build/Products/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)
+      CONFIGURATION_TEMP_DIR: $(DM_XCODE_OUTPUT_ROOT)/Build/Intermediates.noindex/$(PROJECT_NAME).build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)
+      TARGETED_DEVICE_FAMILY: "1,2"
+      ENABLE_BITCODE: NO
+      GCC_C_LANGUAGE_STANDARD: gnu11
+      OTHER_CFLAGS: $(inherited) -mcpu=apple-a18   # as project.yml: the host assembly has LSE atomics
+      CLANG_ENABLE_OBJC_ARC: YES
+      DEBUG_INFORMATION_FORMAT: dwarf
+      GCC_WARN_INHIBIT_ALL_WARNINGS: YES

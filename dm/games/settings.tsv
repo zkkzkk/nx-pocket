@@ -4,12 +4,12 @@
 # Columns, separated by tabs:
 #   variable  the environment variable the setting sets
 #   kind      choice: values value=label,... (languages: the game's own, from its control data); range: values low:high:step, shown as a percentage;
-#             toggle: values - (on sets 1, off 0) or <on>/<off>, the two values the variable takes (on/off)
+#             toggle: values - (on sets 1, off 0) or <on>/<off>, the two values the variable takes (on/off); text: values -, a line the player types (empty: the variable is not set)
 #   default   a value (a toggle's: 1 on, 0 off); DM_GAME_<NAME>: the host's own default from the game profile (game_profile.h, game.py); build:<VAR>: the IPA build's setting (build_ipa.sh)
 #             <ios>|<mac> selects the platform's default before resolving a profile macro or build variable
 #   shown     always; DM_GAME_<NAME>!=<value> or ==<value>; fixups:<KEY>: main's rewriter table has that key (a stub in the game's build, patch_nso.py); languages>1; gfxapi:<API>: the packer's GFXAPI;
 #             platform:<ios | mac>: the app's platform (SETTINGS_PLATFORM, ios when unset), for a switch only that platform's front end reads
-#   section   Game, Controls or Performance: a heading on the single settings screen. Rows appear in table order within each section
+#   section   Game, Local play, Controls or Performance: a heading on the single settings screen. Rows appear in table order within each section
 #             Reset to tested defaults clears all launcher choices; values fixed by an env file stay
 #   label, note  the setting's name and the line under it (may be empty; only for a setting with a cost: latency, memory, heat)
 #   meta      optional, key=value pairs separated by ; (settings.py META lists the keys; docs/frontends.md, The settings list, describes them):
@@ -19,10 +19,22 @@ DM_DYNAMIC_RESOLUTION	toggle	-	0	fixups:DYNAMIC_RESOLUTION	Game	Dynamic resoluti
 DM_RENDER_SCALE	range	0.5:1.0:0.05	1.0	fixups:RENDER_SCALE	Game	Render scale		level=basic
 DM_OPMODE	choice	1=Docked,0=Handheld	DM_GAME_OPMODE	always	Game	Console mode		level=basic
 DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling	Uses more GPU time and can increase heat.
+DM_FIT	choice	fit=Fit,stretch=Stretch,crop=Crop	fit	always	Game	Screen fill	Fit keeps the shape with black bars; stretch fills the screen; crop fills it and cuts the sides.
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language		level=basic
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	Frame-rate counter
-DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	Touch feedback
+DM_NET	toggle	lan/off	DM_GAME_LOCAL_PLAY	DM_GAME_LOCAL_PLAY!=0	Local play	Local wireless over Wi-Fi	Plays the game's local wireless with devices on the same Wi-Fi.
+DM_NET_PEERS	text	-		DM_GAME_LOCAL_PLAY!=0	Local play	Other devices' addresses	Only when a room is not found on its own: the other devices' IP addresses, separated by commas.
+DM_NICK	text	-		DM_GAME_LOCAL_PLAY!=0	Local play	Player name	Shown to the other players. Each device needs its own.
+DM_TOUCH_HAPTICS	choice	0=Off,1=On press,2=On press and release	1	platform:ios	Controls	Touch feedback
+DM_TOUCH_HAPTICS_GAIN	range	0.2:2:0.1	1.0	platform:ios	Controls	Touch feedback strength
+DM_DPAD_DIAGONAL	range	0:1:0.05	0.5	platform:ios	Controls	D-pad diagonals
+DM_TOUCH_LEFT_DEADZONE	range	0:0.4:0.01	0.10	platform:ios	Controls	Left-stick dead zone	Ignore small movements near the center.
+DM_TOUCH_SWIPE	toggle	-	0	platform:ios	Controls	Swipe camera	Move your finger to turn; the game still limits turning speed.
+DM_TOUCH_SWIPE_GAIN	range	0.25:4:0.05	1.0	platform:ios	Controls	Swipe sensitivity		needs=DM_TOUCH_SWIPE=1
+DM_TOUCH_RIGHT_AREA	choice	third=Right third,half=Right half	third	platform:ios	Controls	Camera touch area	Used by both camera modes; buttons keep priority.
+DM_TOUCH_STICK	choice	fixed=Fixed,float=Anywhere on the left	fixed	platform:ios	Controls	Left stick	Anywhere on the left: the stick centers where your thumb lands on the left half.
+DM_PAD_AB	choice	nintendo=A right / B bottom,xbox=A bottom / B right	nintendo	always	Controls	A/B buttons
 DM_RUMBLE	toggle	-	1	always	Controls	Game rumble		level=basic
 DM_RUMBLE_GAIN	range	0:3:0.1	1.0	always	Controls	Rumble strength		needs=DM_RUMBLE=1
 DM_RUMBLE_MIN	range	0:0.9:0.05	0	always	Controls	Rumble cutoff

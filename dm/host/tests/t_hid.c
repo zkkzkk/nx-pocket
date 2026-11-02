@@ -21,7 +21,8 @@ static int hid_clock_gettime(clockid_t clock, struct timespec *ts) { (void)clock
 static int hid_usleep(useconds_t usec) { (void)usec; if (script_hold) script_hold(); return 0; }
 #define CHECK(c, msg) do { checks++; if (!(c)) { fails++; fprintf(stderr, "FAIL: %s (line %d)\n", msg, __LINE__); } } while (0)
 int dm_opmode(void) { return g_mode; }
-uint64_t guest_ns(void) { return 1000000000ull; }
+static uint64_t g_now = 1000000000ull, g_step = 20000000ull;   // each guest clock read moves on a frame and a bit, so a latched press is gone by the next read unless a test shortens the step
+uint64_t guest_ns(void) { return g_now += g_step; }
 uint64_t now_ns(void) { return motion_now; }
 static uint64_t test_frame;   // presented frames (t_rec moves it)
 uint64_t dm_guest_frame(void) { return test_frame; }
@@ -142,6 +143,17 @@ static void t_npads(void) {
 static dm_haptic_state vibration[DM_PLAYERS];
 static int vibration_calls;
 static void vibration_sink(dm_haptic_state s) { vibration[s.player] = s; vibration_calls++; }
+// A short press: released before the game's first read, it still shows in that read and in a second read of the same frame, and is gone a frame later (take_latch)
+static void t_latch(void) {
+    g_mode = 1; dm_pad_players(0x1); ids((const uint32_t[]){0, NPAD_HANDHELD}, 2);
+    dm_input_set(0, 0, 0, 0, 0); dm_pad_set(0, 0, 0, 0, 0); buttons_of(0, STYLE_FULLKEY);
+    g_step = 1000000;   // reads 1 ms apart
+    dm_input_set(DM_BTN_B, 0, 0, 0, 0); dm_input_set(0, 0, 0, 0, 0);
+    CHECK(buttons_of(0, STYLE_FULLKEY) == DM_BTN_B, "a press released before the read shows in that read");
+    CHECK(buttons_of(0, STYLE_FULLKEY) == DM_BTN_B, "and in a second read of the same frame");
+    g_step = 20000000;
+    CHECK(buttons_of(0, STYLE_FULLKEY) == 0, "a frame later it is released");
+}
 static void t_vibration(void) {
     uint32_t h[2] = {0}, id = 0, info[2];
     dm_vibration v = {0.25, 160, 0.5, 320}, got;
@@ -489,6 +501,7 @@ int main(void) {
     t_slots();
     t_npads();
     t_script();
+    t_latch();
     t_vibration();
     t_rumble_log();
     t_motion_threads();

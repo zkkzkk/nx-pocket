@@ -1,0 +1,3 @@
+/* NX Pocket's Info.plist words in English (project.yml has them too: the base) */
+"CFBundleDisplayName" = "NX Pocket";
+"NSLocalNetworkUsageDescription" = "Local play: find and join other devices on the same Wi-Fi.";

@@ -106,6 +106,16 @@ int main(void) {
         CHECK(read_fs("rom:\\data\\a", got, sizeof got) && !strcmp(got, "mod") && read_fs("rom:\\data\\c", got, sizeof got) && !strcmp(got, "xy"), "backslash paths reach the overlay folder and the image");
         h = 0; cnt = -1; CHECK(h_fs_OpenDirectory(&h, "rom:\\data", DIRMODE_DIR | DIRMODE_FILE) == RES_OK && h_fs_DirCount(&cnt, h) == RES_OK && cnt == 4, "and list the merged directory (%lld)", (long long)cnt); h_fs_CloseDirectory(h);
         unsetenv("DM_ROMFS_OVERLAY"); g_nmnt = 0;
+        {   // a single-file pack (format 3): the image first, the pack's other parts after it; DM_ROMFS_SIZE says where the image ends
+            char pp[1100]; snprintf(pp, sizeof pp, "%s/game.nxpack", root); FILE *pf = fopen(pp, "wb"); fwrite(img, 1, sizeof img, pf); fwrite("TRAILING PACK PARTS", 1, 19, pf); fclose(pf);
+            setenv("DM_ROMFS", pp, 1); unsetenv("DM_ROMFS_SIZE");
+            pid_t pid = fork(); if (!pid) { freopen("/dev/null", "w", stderr); h_fs_MountRom("rom", NULL, 0); _exit(0); }
+            int ws = 0; waitpid(pid, &ws, 0); CHECK(!(WIFEXITED(ws) && WEXITSTATUS(ws) == 0), "without DM_ROMFS_SIZE the pack file is not an image (its index does not end the file)");
+            char len[32]; snprintf(len, sizeof len, "%zu", sizeof img); setenv("DM_ROMFS_SIZE", len, 1);
+            CHECK(h_fs_MountRom("rom", NULL, 0) == RES_OK, "with it the image at the start of the pack mounts");
+            CHECK(read_fs("rom:/data/a", got, sizeof got) && !strcmp(got, "hello") && read_fs("rom:/data/c", got, sizeof got) && !strcmp(got, "xy"), "and its files read");
+            unsetenv("DM_ROMFS_SIZE"); setenv("DM_ROMFS", ip, 1); g_nmnt = 0;
+        }
         snprintf(fn, sizeof fn, "%s/2.img", root); CHECK(!link(ip, fn), "stage a DLC image"); setenv("DM_AOC_DIR", root, 1);
         size_t cache = 0;
         CHECK(h_fs_QueryAocCache(&cache, 2) == RES_OK && cache == 176, "DLC image reports Horizon table size (176, got %zu)", cache);

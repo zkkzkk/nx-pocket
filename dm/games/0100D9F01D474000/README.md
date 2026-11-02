@@ -31,11 +31,19 @@ One BNSH, `shader/shader_NX.bnsh` (2 vertex and 33 pixel shaders, all 2D), with 
 
 - **Not a host bug: the TV latency calibration ("press A when you hear the fourth beat") ignores A.** Docked, the first boot runs it (scene script `main+0x4c0820`). It starts listening only `0x3c0` frames (16 s) after the prompt, through the active controller (`main+0x22b0` id `0x3ed`, virtual button 4 = A), and passes when about ten presses keep a steady offset within −5 to +13 frames of the cue (evaluation `main+0x2948c0`; offset = cue ticks at `+0x34` / about 17 ticks per frame, about 480 per beat). Scripted presses at fixed seconds drift off the beat; use frame-timed `DM_KEYS` at the bar period (117.12 frames at its 123 BPM) and read each press's offset with `DM_PROBE=main:2951f0@34`. A passed calibration is saved per TV panel identity (the host's all-zero one included) and not asked again.
 - **Current:** the profile plays it handheld with Boost, which skips the TV setup and keeps the 1080p draw size.
-- The iOS app starts it in the 2D gamepad layout.
+- The iOS app starts it in the **Rhythm** gamepad layout (`pad_layout rhythm`, `DmGamepad.m`): anywhere in the right half of the controls area presses A; the left half presses
+  what the current scene uses (one button, two side by side, or directions), with −, + and B always on screen and X / Y when a scene uses them.
+  The left area's split shows as dashed lines (two opposite directions: its halves; four: the triangles between its diagonals) with an arrow in each part; nothing is labelled
+  A (the right area always is, and the left one in A-only scenes). Outlines, lines and labels show for 3 s on each new scene, then fade. The Tap layout is not offered (no touch screen).
+  Drum Lessons, which use almost every button, get the 3D layout. The host tells the scene from the asset folders the game opens (`hle_touchhint.c`, rules in `touch_scenes.tsv`:
+  `graph/prologue/<name>/` is a title card, `graph/scene/<name>/` play, `graph/menu|result/` menus). The layout button cycles 2D → 3D → ♪.
+  The touch design, the scene rules and the per-minigame button table (read from the controller prompts in `mesg/CN/CNzh/stage_<name>_00.msbt`) are from Touchable
+  (MIT, github.com/MZhao-ouo/Touchable, by mzhao). A short tap still lasts at least 12 ms in every read of the controller (`LATCH_HOLD_NS`, `hle_hid.c`).
 
 ## Files
 
 - `romfs_marker` is `sound/sm/showtime/n_virus_very_hard.cwv`.
+- `touch_scenes.tsv`: the Rhythm layout's scene rules and per-minigame buttons (format in `hle_touchhint.c`).
 
 ## Found on this game
 

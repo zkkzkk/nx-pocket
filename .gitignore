@@ -11,3 +11,23 @@ dm/games/*/cb_extent.tsv
 .coverage
 .coverage.*
 /coverage.json
+# NX Pocket: never committed — game files, keys, certificates and build products
+*.nsp
+*.nsz
+*.xci
+*.xcz
+*.nca
+*.nxpack
+*.nxpack.partial
+*.ipa
+*.p12
+*.mobileprovision
+*.keys
+prod.keys
+title.keys
+*_build/
+*-work/
+*_survey/
+dm/mac/pocket/build/
+dm/mac/pocket/update-key*
+dm/mac/pocket/release/

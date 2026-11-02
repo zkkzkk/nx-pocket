@@ -113,6 +113,63 @@ HLE_FORCE("_ZN2nn6fontll18ScalableFontEngine8LoadFontEPcPKvjj", "shared font BFT
     pthread_once(&font_load_once, font_load_init);
     return font_load(self, name, font_payload(data), index, capacity);
 }
+// ScalableFontEngine::Initialize(work, size) hands the engine (iType) its whole heap, and LoadFont allocates the font's tables from it. Games size it for the system's own shared font:
+//   Mario Tennis Aces (3.1.1, SDK 4.5.0) gives its glyph engine 512 KB and each of its per-thread engines 50 KB (main+0x59b0a0 / main+0x59b0f8) and loads the shared standard font into all of them.
+//   The stand-in (Arial Unicode, 22 MB, about 50,000 glyphs) did not fit in 50 KB: LoadFont failed with 201 (out of memory), the engine had no font, the first glyph lookup ("?") returned null
+//   and main+0x599e14 crashed at address 0x38. An engine given less than FONT_WORK_MIN (256 KB) works in a host buffer of that size instead; the game frees the buffer it gave, which it reads back with
+//   GetPointerToWorkBuffer (main+0x59b92c, before Finalize), so that answers the game's own pointer, and Finalize frees the host's
+enum { FONT_WORK_MAX = 64 };
+static struct { void *engine, *game, *host; } font_work[FONT_WORK_MAX];
+// Arial Unicode loads with 64 KB and fails with 50 KB; four times what it needs leaves room for a larger DM_SHARED_FONT
+enum { FONT_WORK_MIN = 0x40000 };
+static void (*font_init)(void *, void *, uint32_t);
+static void *(*font_workbuf)(void *);
+static void (*font_fini)(void *);
+static pthread_once_t font_work_once = PTHREAD_ONCE_INIT;
+static void font_work_init(void) {
+    font_init = guest_sym("_ZN2nn6fontll18ScalableFontEngine10InitializeEPvj");
+    font_workbuf = guest_sym("_ZN2nn6fontll18ScalableFontEngine22GetPointerToWorkBufferEv");
+    font_fini = guest_sym("_ZN2nn6fontll18ScalableFontEngine8FinalizeEv");
+    if (!font_init || !font_workbuf || !font_fini) die("ScalableFontEngine Initialize / GetPointerToWorkBuffer / Finalize not found in the guest");
+}
+HLE_FORCE("_ZN2nn6fontll18ScalableFontEngine10InitializeEPvj", "font engine heap: at least 256 KB, so the stand-in shared font fits; the font engine itself stays in the SDK", void, h_font_Init, void *self, void *work, uint32_t size) {
+    pthread_once(&font_work_once, font_work_init);
+    uint32_t min = FONT_WORK_MIN;
+    if (size < min) {
+        void *h = mmap(NULL, min, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        pthread_mutex_lock(&font_mu);
+        int slot = -1;
+        for (int i = 0; i < FONT_WORK_MAX; i++) if (font_work[i].engine == self || (slot < 0 && !font_work[i].engine)) { slot = i; if (font_work[i].engine == self) break; }
+        if (h != MAP_FAILED && slot >= 0) {
+            if (font_work[slot].engine == self && font_work[slot].host) munmap(font_work[slot].host, min);
+            font_work[slot].engine = self; font_work[slot].game = work; font_work[slot].host = h;
+            pthread_mutex_unlock(&font_mu);
+            LOG("font engine %p: work buffer of %u bytes, given %u bytes by the host", self, size, min);
+            font_init(self, h, min); return;
+        }
+        pthread_mutex_unlock(&font_mu);
+        if (h != MAP_FAILED) munmap(h, min);
+        LOG("[RED] font engine %p: no host work buffer (%u bytes kept)", self, size);
+    }
+    font_init(self, work, size);
+}
+HLE_FORCE("_ZN2nn6fontll18ScalableFontEngine22GetPointerToWorkBufferEv", "font engine heap: the game's own buffer when the host gave the engine a larger one", void *, h_font_WorkBuf, void *self) {
+    pthread_once(&font_work_once, font_work_init);
+    void *r = NULL;
+    pthread_mutex_lock(&font_mu);
+    for (int i = 0; i < FONT_WORK_MAX; i++) if (font_work[i].engine == self) { r = font_work[i].game; break; }
+    pthread_mutex_unlock(&font_mu);
+    return r ? r : font_workbuf(self);
+}
+HLE_FORCE("_ZN2nn6fontll18ScalableFontEngine8FinalizeEv", "font engine finalize; frees the host's work buffer", void, h_font_Fini, void *self) {
+    pthread_once(&font_work_once, font_work_init);
+    font_fini(self);
+    void *h = NULL;
+    pthread_mutex_lock(&font_mu);
+    for (int i = 0; i < FONT_WORK_MAX; i++) if (font_work[i].engine == self) { h = font_work[i].host; font_work[i].engine = font_work[i].game = font_work[i].host = NULL; break; }
+    pthread_mutex_unlock(&font_mu);
+    if (h) munmap(h, FONT_WORK_MIN);
+}
 // The address points straight at the TTF (past the 8-byte header) and the size excludes the header, except for a game on SDK 11 or later whose main imports ScalableFontEngineHelper::Decode
 //   (dm_sdk_major, dm_main_imports; the profile's shared_font overrides). Super Mario 3D World + Bowser's Fury (SDK 10) records shared fonts as type 0 (main+0x975658), calls no Decode and hands the address
 //   as is to ScalableFontEngine::LoadFont; with the header LoadFont fails with error 403 and SetFont with 301, every lookup of the "?" glyph then misses, and main+0x6c73c0 crashes on a null pointer.

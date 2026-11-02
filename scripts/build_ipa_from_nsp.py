@@ -321,6 +321,7 @@ def game_language(want, asked, have):
     A language the game lacks stops the build when it was asked for; English, the default, then falls back to the game's first language"""
     if not have or want in have: return want
     if LANG_NEAR.get(want) in have: return LANG_NEAR[want]
+    if want != 'en-US' and not asked: return game_language('en-US', False, have)   # a preferred language (--prefer-language) the game lacks: English, as by default
     if asked: raise BuildError(f'the game has no {want} ({dict(nacp.LANGUAGES)[want]}); its languages: {language_list(have)} (--language / LANGUAGE)')
     return have[0]
 
@@ -378,6 +379,21 @@ def rmtree(p):
     and drops it when `x` is deleted, so the walk's later unlink of `._x` raised FileNotFoundError and left the folder half deleted"""
     if p.is_symlink() or p.is_file(): p.unlink()
     elif p.exists(): shutil.rmtree(p, onexc=_gone)   # Python 3.13 and later pass these by themselves
+
+
+def control_only(repo, nsp_dir, app, fam, keys, env):
+    """--control-only: the newest update's control data, else the base game's, into <title ID>_build/control/, with nx_extract built there once (tools/nx_extract, as a build makes it;
+    made again when its source is newer)"""
+    work = nsp_dir / f'{app:016X}_build'; logs = work / 'logs'; logs.mkdir(parents=True, exist_ok=True)
+    nx = work / 'tools/nx_extract/nx_extract'
+    src = repo / 'dm/tools/nx_extract/Program.cs'
+    if not nx.exists() or nx.stat().st_mtime < src.stat().st_mtime: nx = build_nx_extract(repo, work, logs, env)
+    upd = max(fam['updates'], key=lambda u: u[0] or 0)[1] if fam['updates'] else None
+    out = work / 'control'
+    run([nx, keys, '--control', fam['base'], upd or '-', out], logs / 'control.log', env=env)
+    for line in (logs / 'control.log').read_text(errors='replace').splitlines():
+        if line.startswith(('name ', 'display version ', 'icon ')): say(line)
+    say(f'control data: {out}')
 
 
 def build_nx_extract(repo, work, logs, env):
@@ -2198,6 +2214,8 @@ def parse_args(argv):
     ap.add_argument('--xcode-workspace', help='workspace collecting prepared games (default: NxNative.xcworkspace beside the NSP folder; use with --prepare-xcode)')
     ap.add_argument('-l', '--language', help='game language, a code or a name: ja, fr, de, es, it, nl, pt, ru, ko, zh-Hans, zh-Hant, en-GB, fr-CA, es-419, pt-BR, Japanese, ... (default: the LANGUAGE setting, else English); '
                     'it must be one the game supports, which the console lists')
+    ap.add_argument('--prefer-language', help='like --language, but a language the game lacks falls back to English (or the game\'s first language) instead of stopping the build; '
+                    '--language and the LANGUAGE setting win over it (NX Pocket for Mac passes the Mac\'s language)')
     ap.add_argument('--keep-extracted', action=argparse.BooleanOptionalAction, help='keep the extracted game files after the IPA is built, for the next build (default: the KEEP_EXTRACTED setting, on)')
     ap.add_argument('--work-dir', help='the game\'s build folder, used as it is (default: the WORK_DIR setting, else <title ID>_build in the NSP folder); the extracted files, shader cache and temporary files live there, and the IPA or Mac app defaults to the folder holding it')
     ap.add_argument('--env-file', help='environment switches for a diagnostic build (one KEY=VALUE per line)')
@@ -2206,6 +2224,7 @@ def parse_args(argv):
                     'With --platform mac-app: the Mac app\'s archive, by default for this Mac\'s GPU (none: the app builds the bases on its first start)')
     ap.add_argument('--show-fps', action=argparse.BooleanOptionalAction, help='show the game\'s frame rate on the iPhone, frames on screen per second at the top left (default: the SHOW_FPS setting, on)')
     ap.add_argument('--motion', action=argparse.BooleanOptionalAction, help='pass a gyro controller\'s motion (on iOS also the phone\'s own) to games that read it; --no-motion builds with DM_MOTION=0, for when motion misbehaves (default: the MOTION setting, on)')
+    ap.add_argument('--control-only', action='store_true', help='only the game\'s control data, its name, version and icon, to <title ID>_build/control/ (control.nacp, icon.jpg): read from the packages without extracting them (NX Pocket for Mac shows them before a build)')
     ap.add_argument('--survey-only', action='store_true', help='a game with no profile: only the survey, no provisional profile and no IPA')
     ap.add_argument('--allow-damaged', action='store_true', help='a damaged NSP (files failing the NCA hash check): write them as read and go on instead of stopping')
     ap.add_argument('--allow-shader-regressions', action='store_true', help='shaders that translated in the game\'s previous build and fail with the current translation chain: '
@@ -2308,14 +2327,15 @@ def main(args=None):
     global pg; import profile_guess as pg   # dm/games: a provisional profile's keys from the game files and from the heap check
     sys.path.insert(0, str(repo / 'dm/tools')); global nacp; import nacp   # the game name in the NSP's control data
     lang_in = args.language or LANGUAGE   # checked against the game's languages once its control data is extracted
-    want_lang = language_code(lang_in) if lang_in else 'en-US'
-    if not want_lang: raise BuildError(f'unknown game language {lang_in!r}; give one of {language_list([c for c, _ in nacp.LANGUAGES])}, by code or by name')
+    want_lang = language_code(lang_in or args.prefer_language) if lang_in or args.prefer_language else 'en-US'
+    if not want_lang: raise BuildError(f'unknown game language {lang_in or args.prefer_language!r}; give one of {language_list([c for c, _ in nacp.LANGUAGES])}, by code or by name')
     env = dict(os.environ, PATH=os.pathsep.join(TOOL_PATHS + [os.environ.get('PATH', '/usr/bin:/bin:/usr/sbin:/sbin')]))
     env.setdefault('USER', getpass.getuser())   # xcodegen fails without USER (Couldn't find current username)
     configure_dotnet(env)
     env.setdefault('J', str(os.cpu_count() or 8))   # shader_split.py's and dmsh_build.py's workers (their default is 8)
     py = sys.executable
     with package_title_reader(repo, keys, env) as from_package: app, fam = scan_nsps(nsp_dir, from_package)
+    if args.control_only: return control_only(repo, nsp_dir, app, fam, keys, env)
     fam = decompress_nsz(nsp_dir, app, fam, keys, env, work_dir(args))
     force =args.provisional or PROVISIONAL   # a provisional profile even when dm/games has one (testing the guesses)
     g, provisional, shadowed = None if force else gamemod.by_title(app), False, False

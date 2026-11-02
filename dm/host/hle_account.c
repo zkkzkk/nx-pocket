@@ -2,11 +2,18 @@
 // Online accounts (network service account / Nintendo Account authorization / tokens) are out of scope and uniformly return RES_FAIL; the async context's completion event fires immediately.
 // Environment switch: DM_NICK=nickname (default Player).
 #include "hle.h"
+#include "hle_sock.h"
 
 typedef struct { uint64_t v[2]; } Uid;                 // nn::account::Uid, 16 bytes
 typedef struct { uint64_t v[3]; } UserHandle;          // nn::account::UserHandle, 24 bytes
 _Static_assert(sizeof(Uid) == 16, "Uid");
-static const Uid k_uid = {{0x78626c0000000001ull, 0x53574e4154495645ull}};   // Non-zero means valid
+static const Uid k_uid0 = {{0x78626c0000000001ull, 0x53574e4154495645ull}};   // Non-zero means valid
+// Local network play (DM_NET=lan) needs a user of its own on each console: Super Smash Bros. Ultimate turns away a player whose user is already in the room ("cannot join"),
+// and every host has the same fixed user. With DM_NET=lan the low word of its first half is this console's device ID (hle_sock.c dm_device_id), the rest as before
+static Uid g_uid; static pthread_once_t g_uid_once = PTHREAD_ONCE_INIT;
+static void uid_make(void) { g_uid = k_uid0; if (dm_net_on()) g_uid.v[0] = (g_uid.v[0] & ~0xffffffffull) | (dm_device_id() & 0xffffffffull) | 1; }
+static Uid user_uid(void) { pthread_once(&g_uid_once, uid_make); return g_uid; }
+#define k_uid (user_uid())
 #define HANDLE_MAGIC 0x55534552484e444cull                                    // "USERHNDL"
 
 HLE_FORCE("_ZN2nn7account10InitializeEv", "connects to the acc:u0 account service; the host has one fixed local user", void, h_acc_Init, void) {}

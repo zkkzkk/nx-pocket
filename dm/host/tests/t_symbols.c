@@ -107,3 +107,7 @@ int main(void) {
     puts("Symbol indexes: collisions, duplicate precedence/rejection, misses, wrappers and 4096 reusable stubs: OK");
     return 0;
 }
+
+// These tests isolate the offline loader, without a community-network configuration.
+void *dm_ocw_resolve(const char *name) { (void)name; return NULL; }
+void dm_ocw_install(void) {}
