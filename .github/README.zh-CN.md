@@ -36,10 +36,16 @@
 
 NX Pocket 基于 [nxnative](https://github.com/seedds/nxnative)：游戏自己的代码原生运行在 Apple 芯片上，Switch 的画面用 Metal 重建。NX Pocket 补上了周边的部分：一个装下所有游戏的 iPhone App、一种把游戏搬到手机上的游戏包格式、一个制作游戏包的 Mac App，以及一层折叠屏适配。
 
-<p align="center">
-  <img src="../docs/images/nx-pocket/iphone-home.jpg" width="56%" alt="折叠屏 iPhone 上的 NX Pocket 游戏库">
-</p>
-<p align="center"><sub>游戏库：每个游戏的封面配上模糊背景，选中的那个会放大。</sub></p>
+<table>
+  <tr>
+    <td width="50%"><img src="../docs/images/nx-pocket/iphone-home.jpg" alt=""><br><sub>游戏库</sub></td>
+    <td width="50%"><img src="../docs/images/nx-pocket/ingame-landscape.jpg" alt=""><br><sub>对战中，触屏按键叠在画面上</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="../docs/images/nx-pocket/handheld-portrait.jpg" alt="" width="70%"><br><sub>掌机模式：画面在上，按键在下</sub></td>
+    <td width="50%"><img src="../docs/images/nx-pocket/local-play-room.jpg" alt=""><br><sub>本地联机：房间等待玩家加入</sub></td>
+  </tr>
+</table>
 
 ## 需要准备
 

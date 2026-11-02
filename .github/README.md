@@ -36,10 +36,16 @@
 
 NX Pocket is built on [nxnative](https://github.com/seedds/nxnative): the game's own code runs natively on the Apple chip, with Switch graphics rebuilt on Metal. NX Pocket adds the parts around it: an iPhone app that holds every game, a pack format to move games to it, a Mac app that makes the packs, and a layer for foldable phones.
 
-<p align="center">
-  <img src="../docs/images/nx-pocket/iphone-home.jpg" width="56%" alt="NX Pocket's game library on a foldable iPhone">
-</p>
-<p align="center"><sub>The game library: each game's cover over a blurred background, the selected one larger.</sub></p>
+<table>
+  <tr>
+    <td width="50%"><img src="../docs/images/nx-pocket/iphone-home.jpg" alt=""><br><sub>The game library</sub></td>
+    <td width="50%"><img src="../docs/images/nx-pocket/ingame-landscape.jpg" alt=""><br><sub>In a match, touch controls over the picture</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="../docs/images/nx-pocket/handheld-portrait.jpg" alt="" width="70%"><br><sub>Handheld mode: picture on top, controls below</sub></td>
+    <td width="50%"><img src="../docs/images/nx-pocket/local-play-room.jpg" alt=""><br><sub>Local play: a room waiting for players</sub></td>
+  </tr>
+</table>
 
 ## Requirements
 
