@@ -30,7 +30,7 @@
 - **Game packs.** Each game becomes one `.nxpack` file. Import it from Files, AirDrop or a drive; NX Pocket reads the game data in place and checks every part against its checksum.
 - **Foldable handheld mode.** On a foldable iPhone the picture sits on the top half and the controls on the bottom, clear of the fold. Half folded, it stands like a handheld; held upside down, the picture turns itself upright.
 - **Local play.** Switch local wireless over Wi-Fi between iPhones and Macs: Super Smash Bros. Ultimate and Mario Tennis Aces rooms, joining and matches.
-- **NX Pocket for Mac.** Drop in your game files and get a pack, with live progress, a queue, one-click sending to your iPhone, and installing NX Pocket itself.
+- **NX Pocket for Mac.** Drop in your game files and get a pack, with live progress, a queue, one-click sending to your iPhone, and installing NX Pocket itself. **Play on Mac** runs the same game on the Mac, with keyboard, controllers and the same cloud saves.
 
 ## What NX Pocket is
 
@@ -49,7 +49,7 @@ NX Pocket is built on [nxnative](https://github.com/seedds/nxnative): the game's
 
 ## Requirements
 
-- A Mac with Apple silicon, macOS 26.6 or later, and Xcode 27.1.
+- A Mac with Apple silicon, macOS 26.6 or later, and Xcode 27.2.
 - An iPhone or iPad with an A17 Pro / M1 chip or later, iOS / iPadOS 26 or later.
 - An Apple ID. A paid developer account is recommended: a year per signature, and the Increased Memory Limit entitlement the bigger games need.
 - Your own game files (NSP, XCI, NSZ or XCZ) and your own `prod.keys`, dumped from your console.

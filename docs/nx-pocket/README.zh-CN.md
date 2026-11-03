@@ -20,7 +20,7 @@ NX Pocket 是一个在 iPhone 上装所有 Switch 游戏的 App，基于 [nxnati
 
 ## 需要准备
 
-- 一台 Apple 芯片的 Mac，macOS 26.6 或更新，Xcode 27.1（工具链见 [nxnative 的说明](../../README.md#build-from-the-command-line)）。
+- 一台 Apple 芯片的 Mac，macOS 26.6 或更新，Xcode 27.2（工具链见 [nxnative 的说明](../../README.md#build-from-the-command-line)）。
 - nxnative 支持的 iPhone 或 iPad（A17 Pro / M1 或更新），iOS / iPadOS 26 或更新。
 - 一个 Apple ID。推荐付费开发者账号：签名一年有效，并且能开"大内存"权限，大型游戏需要它。免费账号的签名 7 天过期。
 - 你自己从主机导出的游戏文件（NSP / XCI / NSZ / XCZ）和 `prod.keys`。

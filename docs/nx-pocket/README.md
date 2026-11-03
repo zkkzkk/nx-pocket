@@ -20,7 +20,7 @@ NX Pocket is one iPhone app for all your Switch games, built on [nxnative](https
 
 ## What you need
 
-- A Mac with Apple silicon, macOS 26.6 or later, and Xcode 27.1 (see [nxnative's README](../../README.md#build-from-the-command-line) for the toolchain).
+- A Mac with Apple silicon, macOS 26.6 or later, and Xcode 27.2 (see [nxnative's README](../../README.md#build-from-the-command-line) for the toolchain).
 - An iPhone or iPad that nxnative supports (A17 Pro / M1 or later), iOS / iPadOS 26 or later.
 - An Apple ID. A paid developer account is recommended: its signatures last a year and it allows the Increased Memory Limit entitlement, which the bigger games need. A free account's signatures last 7 days.
 - Your own game files (NSP / XCI / NSZ / XCZ) and your own `prod.keys`, dumped from your console.
