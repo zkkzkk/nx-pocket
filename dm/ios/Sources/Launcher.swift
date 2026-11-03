@@ -26,6 +26,18 @@ struct CloudSavesSection: View {
                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Button(folder.isEmpty ? tr("Choose a folder in iCloud Drive…") : tr("Choose a different folder…")) { picking = true }
+                // The sheet sits on the button, not on the Section: SwiftUI hands a Section's modifiers to every row, so one tap presented a picker per row and they invalidated each other (LNPANDY/NX2Apple#315).
+                .sheet(isPresented: $picking) {
+                    DocumentPicker(types: [.folder]) { url in
+                        picking = false
+                        if dm_store_cloud_saves(url) {
+                            note = tr("Folder saved. It takes effect the next time a game starts.")
+                            refresh()
+                        } else {
+                            note = tr("This folder cannot be used. Choose another folder.")
+                        }
+                    } onCancel: { picking = false }
+                }
             if !folder.isEmpty {
                 Button(tr("Turn off cloud saves"), role: .destructive) {
                     dm_clear_cloud_saves(); refresh(); note = ""
@@ -36,17 +48,7 @@ struct CloudSavesSection: View {
                  ? tr("Use the same iCloud Drive folder as Cloud Saves in the Mac app. Saves are downloaded when a game starts and uploaded after each save; replaced saves are kept in save-backups.")
                  : note)
         }
-        .sheet(isPresented: $picking) {
-            DocumentPicker(types: [.folder]) { url in
-                picking = false
-                if dm_store_cloud_saves(url) {
-                    note = tr("Folder saved. It takes effect the next time a game starts.")
-                    refresh()
-                } else {
-                    note = tr("This folder cannot be used. Choose another folder.")
-                }
-            } onCancel: { picking = false }
-        }
+
         .onAppear(perform: refresh)
     }
 
