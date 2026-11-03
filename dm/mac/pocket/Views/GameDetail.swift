@@ -1,5 +1,5 @@
 // A game's page: a banner of its cover blurred (its own icon, as on the phone) with the cover, its name, version and files; then its game pack (making it, stage by
-// stage as the scripts report them, or what it is once made), sending it to the iPhone, and its files. Playing on this Mac comes later (a place is kept for it).
+// stage as the scripts report them, or what it is once made), sending it to the iPhone, its files, and playing it on this Mac (its Mac version, MacVersion).
 import SwiftUI
 
 struct GameDetail: View {
@@ -15,10 +15,7 @@ struct GameDetail: View {
                     PackCard(game: game)
                     SendCard(game: game)
                     FilesCard(game: game)
-                    Card(title: tr("Play on this Mac"), symbol: "macbook") {
-                        Text(tr("Coming later: play on this Mac, with saves synced with the iPhone.")).font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    .opacity(0.6)
+                    MacCard(game: game)
                 }
                 .padding(.horizontal, 24).padding(.bottom, 24)
             }
@@ -143,9 +140,9 @@ private struct PackCard: View {
 
     var body: some View {
         Card(title: tr("Game Pack"), symbol: "shippingbox") {
-            if let i = model.queue.firstIndex(of: game.id) {
+            if let i = model.queue.firstIndex(of: game.id), !model.queuedMac.contains(game.id) {
                 queued(i)
-            } else if let b = model.builds[game.id], b.state != .done {
+            } else if let b = model.builds[game.id], b.kind == .pack, b.state != .done {
                 BuildView(build: b, game: game)
             } else if let pack = game.pack {
                 ready(pack)
@@ -242,6 +239,71 @@ private struct PackCard: View {
     }
 }
 
+// MARK: - Play on this Mac
+
+/// Playing the game on this Mac: its Mac version (MacVersion) made from the build files the first time, then opened at once; its settings window comes first
+private struct MacCard: View {
+    @EnvironmentObject var model: AppModel
+    let game: MacGame
+    @State private var age: PackAge?
+
+    var body: some View {
+        Card(title: tr("Play on this Mac"), symbol: "macbook") {
+            if model.queuedMac.contains(game.id), let i = model.queue.firstIndex(of: game.id) {
+                Label(String(format: tr("Queued: %d ahead"), i + (model.building == nil ? 0 : 1)), systemImage: "hourglass").font(.system(size: 13, weight: .semibold))
+            } else if let b = model.builds[game.id], b.kind == .mac, b.state != .done {
+                BuildView(build: b, game: game)
+            } else if let app = game.macApp {
+                ready(app)
+            } else {
+                notMade
+            }
+        }
+        .task(id: game.macApp) {
+            guard let app = game.macApp else { age = nil; return }
+            let (t, r) = (game.titleID, model.repo)
+            age = await Task.detached { MacVersion.age(app, titleID: t, repo: r) }.value
+        }
+    }
+
+    private var savesNote: some View {
+        Text(tr("Keyboard or controller. Its settings window comes first: frame rate, resolution, language. Saves stay on this Mac; choose the same iCloud Drive folder under Cloud saves there and in NX Pocket to play on from the same save."))
+            .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var notMade: some View {
+        HStack(alignment: .center, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(game.buildDir != nil ? String(format: tr("The first time, a Mac version is made from the game's build files (about %d minutes); then it starts at once."), ShaderRebuild.minutes(game))
+                                          : tr("The first time, a Mac version is made from the game files (20 to 60 minutes); then it starts at once."))
+                    .font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                savesNote
+            }
+            Spacer()
+            Button { model.playOnMac(game) } label: { Label(tr("Play on Mac"), systemImage: "play.fill").padding(.horizontal, 8) }
+                .buttonStyle(.glassProminent).controlSize(.large).disabled(!model.canBuild || game.files.isEmpty)
+        }
+    }
+
+    private func ready(_ app: URL) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            Image(systemName: "checkmark.seal.fill").font(.system(size: 30)).foregroundStyle(Palette.ok)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tr("Mac version ready")).font(.system(size: 15, weight: .semibold))
+                savesNote
+                if let age, age.state == .stale {   // as for a pack: said quietly, it plays as it was made
+                    Label(tr("Newer version available, still playable"), systemImage: "arrow.trianglehead.2.clockwise").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    Text(PackAge.newer(age)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            Button { NSWorkspace.shared.activateFileViewerSelecting([app]) } label: { Label(tr("Show in Finder"), systemImage: "folder") }.buttonStyle(.glass)
+            Button { model.enqueue(game, kind: .mac) } label: { Label(tr("Make Again"), systemImage: "arrow.clockwise") }.buttonStyle(.glass).disabled(!model.canBuild)
+            Button { model.playOnMac(game) } label: { Label(tr("Play on Mac"), systemImage: "play.fill").padding(.horizontal, 6) }.buttonStyle(.glassProminent).controlSize(.large)
+        }
+    }
+}
+
 /// A pack's size, format and when it was made (its size counted off the main thread)
 private struct PackFacts: View {
     let pack: URL
@@ -261,7 +323,7 @@ private struct PackFacts: View {
     }
 }
 
-/// A build in progress or ended: its two steps, the stages each has finished, the current one with its bar and time left; why it failed; Stop
+/// A build in progress or ended: its two steps (one for a Mac version), the stages each has finished, the current one with its bar and time left; why it failed; Stop
 private struct BuildView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var build: PackBuild
@@ -270,9 +332,12 @@ private struct BuildView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                stepBadge(1, tr("Prepare the game"))
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.tertiary)
-                stepBadge(2, tr("Make the game pack"))
+                if build.kind == .mac { stepBadge(1, tr("Make the Mac version")) }
+                else {
+                    stepBadge(1, tr("Prepare the game"))
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.tertiary)
+                    stepBadge(2, tr("Make the game pack"))
+                }
                 Spacer()
                 switch build.state {
                 case .running:
@@ -280,14 +345,14 @@ private struct BuildView: View {
                     Button(role: .destructive) { build.stop() } label: { Label(tr("Stop"), systemImage: "stop.fill") }.buttonStyle(.glass)
                 case .failed, .cancelled:
                     Button { model.showLog = true } label: { Label(tr("Show Log"), systemImage: "text.alignleft") }.buttonStyle(.glass)
-                    Button { model.enqueue(game) } label: { Label(build.state == .failed ? tr("Try Again") : tr("Continue"), systemImage: "arrow.clockwise") }.buttonStyle(.glassProminent)
+                    Button { model.enqueue(game, kind: build.kind) } label: { Label(build.state == .failed ? tr("Try Again") : tr("Continue"), systemImage: "arrow.clockwise") }.buttonStyle(.glassProminent)
                 case .done: EmptyView()
                 }
             }
             ProgressView(value: build.fraction).tint(build.state == .failed ? Palette.danger : Palette.accent)
             if build.state == .failed {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label(tr("Making the game pack failed"), systemImage: "xmark.octagon.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.danger)
+                    Label(build.kind == .mac ? tr("Making the Mac version failed") : tr("Making the game pack failed"), systemImage: "xmark.octagon.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.danger)
                     ForEach(Array(build.problems.suffix(4).enumerated()), id: \.offset) { _, p in
                         Text(p).font(.system(size: 11.5)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     }

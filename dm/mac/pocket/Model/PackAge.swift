@@ -43,7 +43,10 @@ struct PackAge: Equatable {
 
     static func of(pack: URL, titleID: String?, repo: String) -> PackAge {
         let json = PackFile.isFile(pack) ? (try? PackFile(pack))?.data("pack.json") : try? Data(contentsOf: pack.appendingPathComponent("pack.json"))
-        let info = json.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        return of(info: json.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:], titleID: titleID, repo: repo)
+    }
+    /// The same from what a pack.json (or a Mac version's made.json, MacVersion) says: its commit and its shader chain ("shaders")
+    static func of(info: [String: Any], titleID: String?, repo: String) -> PackAge {
         let commit = info["commit"] as? String
         // another shader chain: a newer version whatever the commits say (and the graphics are named as the chain, not twice)
         if let have = info["shaders"] as? String, let want = chain(repo: repo), have != want {
@@ -74,8 +77,8 @@ enum ShaderRebuild {
     static func minutes(_ g: MacGame) -> Int {
         let log = g.buildDir.flatMap { try? String(contentsOf: $0.appendingPathComponent("logs/dmsh_build.log"), encoding: .utf8) }
         let shaders = log?.split(separator: "\n").reversed().lazy.compactMap { l in l.firstMatch(of: /; (\d+) shaders$/).flatMap { Int($0.1) } }.first
-        let base = 8.0   // the host, the library and the pack, which are made again with the shaders
+        let base = 3.0   // the host and the library or the app, made again with the shaders (Hades II's 88 shaders and all: 1.5 minutes for its Mac version)
         let m = shaders.map { base + Double($0) / 1700 } ?? base + Double(g.files.reduce(0) { $0 + $1.size }) / 1e9 * 1.5
-        return max(10, Int((m / 5).rounded(.up)) * 5)   // in fives: it is an estimate
+        return max(5, Int((m / 5).rounded(.up)) * 5)   // in fives: it is an estimate
     }
 }

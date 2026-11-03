@@ -17,6 +17,7 @@ The words NX Pocket (the iPhone app) and NX Pocket for Mac use, in English and i
 | library | 游戏库 | The games in NX Pocket. |
 | game library (code) | 游戏库（程序库） | A pack's `Game.framework`; say "the game's library" when the code is meant, to keep it apart from the list of games. |
 | build files | 构建文件 | What making a pack leaves in `<title ID>_build`, reused by the next build. |
+| Mac version | Mac 版 | A game made for this Mac (nxnative's Mac app of it: settings window, keyboard, controllers), kept in its build files. Not a game pack. |
 | game profile | 游戏配置 | nxnative's `dm/games/<title ID>` folder for a game. |
 | prod.keys | prod.keys | The player's own console keys. Not translated. |
 | developer certificate | 开发者证书 | The `.p12` NX Pocket signs packs with on the iPhone. |
@@ -49,6 +50,7 @@ The words NX Pocket (the iPhone app) and NX Pocket for Mac use, in English and i
 | Install NX Pocket / Update | 安装 NX Pocket / 更新 | Mac: build NX Pocket and install it on the iPhone. |
 | Check for Updates | 检查更新 | Mac: NX Pocket for Mac's own updates. |
 | Report a Problem | 问题报告 | Mac: make a zip of logs and settings for a bug report. |
+| Play on Mac | 在 Mac 上玩 | Mac: play the game on this Mac, from its Mac version (made the first time). |
 
 ## States and checks
 

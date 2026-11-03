@@ -74,6 +74,7 @@ private struct Sidebar: View {
                 ForEach(model.games) { g in
                     GameRow(game: g).tag(g.id)
                         .contextMenu {
+                            Button(tr("Play on Mac")) { model.playOnMac(g) }.disabled(g.macApp == nil && (!model.canBuild || g.files.isEmpty))
                             Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([g.pack ?? g.folder]) }
                             Divider()
                             Button(tr("Remove from List"), role: .destructive) { model.remove(g) }

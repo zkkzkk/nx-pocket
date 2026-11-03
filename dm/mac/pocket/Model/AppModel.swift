@@ -3,10 +3,12 @@
 import AppKit
 import Combine
 
-/// Making a game's pack: the NSP script prepares the game (extract, rewrite, shaders, the Xcode project), then build_pack.py builds and packs it. Its stages are
-/// the scripts' own (`--progress json`)
+/// Making a game's pack: the NSP script prepares the game (extract, rewrite, shaders, the Xcode project), then build_pack.py builds and packs it. Or its Mac version
+/// (kind .mac): the NSP script alone, --platform mac-app. Its stages are the scripts' own (`--progress json`)
 @MainActor final class PackBuild: ObservableObject {
     enum State: Equatable { case running, done, failed, cancelled }
+    enum Kind: Equatable { case pack, mac }
+    let kind: Kind
     @Published private(set) var phase = 1          // 1: prepare the game, 2: make the pack
     @Published private(set) var state: State = .running
     @Published private(set) var current: ToolRun
@@ -14,9 +16,9 @@ import Combine
     private var bag: [AnyCancellable] = []
     private let next: () -> (String, [String], [String: String])?
 
-    init(prepare: (String, [String], [String: String]), then next: @escaping () -> (String, [String], [String: String])?) {
-        self.next = next
-        current = ToolRun(title: tr("Prepare the game"))
+    init(kind: Kind = .pack, prepare: (String, [String], [String: String]), then next: @escaping () -> (String, [String], [String: String])?) {
+        self.kind = kind; self.next = next
+        current = ToolRun(title: kind == .mac ? tr("Make the Mac version") : tr("Prepare the game"))
         start(current, prepare)
     }
 
@@ -25,7 +27,7 @@ import Combine
     /// Both steps as one bar: preparing is most of the time (extraction, the shaders), making the pack the rest
     var fraction: Double {
         let f = current.progress?.fraction ?? 0
-        return state == .done ? 1 : phase == 1 ? f * 0.85 : 0.85 + f * 0.15
+        return state == .done ? 1 : kind == .mac ? f : phase == 1 ? f * 0.85 : 0.85 + f * 0.15
     }
 
     func stop() { current.stop() }
@@ -203,26 +205,29 @@ import Combine
     // MARK: queue
 
     @Published var queue: [MacGame.ID] = []   // games waiting to be made, in order: one build at a time (they share the CPU, the disk and Xcode)
+    @Published var queuedMac: Set<MacGame.ID> = []   // those of them waiting for their Mac version, not their pack
     @Published var queuePaused = false         // the next one waits until the queue goes on
     var building: MacGame.ID? { builds.first { $0.value.state == .running }?.key }
 
-    /// Make `g`'s pack now, or after the builds before it
-    func enqueue(_ g: MacGame) {
+    /// Make `g`'s pack (or its Mac version) now, or after the builds before it
+    func enqueue(_ g: MacGame, kind: PackBuild.Kind = .pack) {
         guard canBuild, builds[g.id]?.state != .running, !queue.contains(g.id) else { return }
         queue.append(g.id)
+        if kind == .mac { queuedMac.insert(g.id) } else { queuedMac.remove(g.id) }
         startNext()
     }
-    func dequeue(_ id: MacGame.ID) { queue.removeAll { $0 == id } }
+    func dequeue(_ id: MacGame.ID) { queue.removeAll { $0 == id }; queuedMac.remove(id) }
     func setQueuePaused(_ p: Bool) { queuePaused = p; startNext() }
     private func startNext() {
         guard building == nil, !queuePaused, let id = queue.first else { return }
         queue.removeFirst()
-        if let g = games.first(where: { $0.id == id }) { build(g) } else { startNext() }
+        let mac = queuedMac.remove(id) != nil
+        if let g = games.first(where: { $0.id == id }) { if mac { buildMac(g) } else { build(g) } } else { startNext() }
     }
 
     func build(_ g: MacGame) {
         guard builds[g.id]?.state != .running, canBuild else { return }
-        guard building == nil else { if !queue.contains(g.id) { queue.append(g.id) }; return }   // another is being made: this one waits its turn
+        guard building == nil else { if !queue.contains(g.id) { queue.append(g.id); queuedMac.remove(g.id) }; return }   // another is being made: this one waits its turn
         let script = (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")
         var args = [script, g.folder.path, "--prepare-xcode", "--progress", "json", "-k", keys]
         if !team.isEmpty { args += ["--team-id", team] }
@@ -243,17 +248,25 @@ import Combine
             pa += self.team.isEmpty ? ["--unsigned"] : ["--team", self.team]
             return (self.python, pa, [:])
         }
+        watch(b, g)
+    }
+
+    /// A build's ends: the game read again, the log opened on a failure, a notification, the next in the queue; a Mac version made on Play on Mac starts at once
+    private func watch(_ b: PackBuild, _ g: MacGame) {
+        let (id, name) = (g.id, g.name)
         b.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send(); DispatchQueue.main.async { self?.showActivity() } }.store(in: &bag)
-        let name = g.name
         b.$state.dropFirst().sink { [weak self] s in
             guard let self else { return }
             DispatchQueue.main.async {
+                if b.kind == .mac, s == .done { self.rescanNow(id); MacVersion.record(self.games.first { $0.id == id }, repo: self.repo) }
                 self.rescan(id)
                 if s == .failed { self.showLog = true }   // a failure opens the log
                 NSApp.requestUserAttention(.informationalRequest)
-                switch s {
-                case .done: Activity.notify(tr("Game pack ready"), String(format: tr("%@ is ready to send to the iPhone."), name))
-                case .failed: Activity.notify(tr("The game pack could not be made"), String(format: tr("%@: see the log in NX Pocket for Mac."), name))
+                switch (s, b.kind) {
+                case (.done, .pack): Activity.notify(tr("Game pack ready"), String(format: tr("%@ is ready to send to the iPhone."), name))
+                case (.done, .mac): if let g = self.games.first(where: { $0.id == id }) { self.playOnMac(g) }
+                case (.failed, .pack): Activity.notify(tr("The game pack could not be made"), String(format: tr("%@: see the log in NX Pocket for Mac."), name))
+                case (.failed, .mac): Activity.notify(tr("The Mac version could not be made"), String(format: tr("%@: see the log in NX Pocket for Mac."), name))
                 default: break
                 }
                 self.showActivity()
@@ -261,6 +274,28 @@ import Combine
             }
         }.store(in: &bag)
         builds[id] = b
+    }
+
+    // MARK: play on this Mac
+
+    /// Play on Mac: its Mac version when it has one (nxnative's Mac app of the game: its settings window, then the game, with the keyboard and controllers), else make
+    /// it first (then it starts)
+    func playOnMac(_ g: MacGame) {
+        if let app = g.macApp {
+            NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if let error { Task { @MainActor in Activity.notify(tr("The game could not be opened"), error.localizedDescription) } }
+            }
+        } else { enqueue(g, kind: .mac) }
+    }
+    /// The Mac version made (again) from the game's build files: build_ipa_from_nsp.py --platform mac-app (the steps the pack's prepare made are reused; the Mac host and
+    /// the Mac shaders are its own), into <title ID>_build/mac/<name>.app, apart from the game's files
+    func buildMac(_ g: MacGame) {
+        guard builds[g.id]?.state != .running, canBuild else { return }
+        guard building == nil else { if !queue.contains(g.id) { queue.append(g.id); queuedMac.insert(g.id) }; return }
+        let script = (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")
+        var args = [script, g.folder.path, "--platform", "mac-app", "-o", MacVersion.output(g).path, "--progress", "json", "-k", keys]
+        if let lang = Self.gameLanguage { args += ["--prefer-language", lang] }
+        watch(PackBuild(kind: .mac, prepare: (python, args, ["NX_EXTRACT_CHUNK_SUMS": "1"])) { nil }, g)
     }
 
     /// The game language to pack: the app's (Settings › Language, else the Mac's), when it is not English (the script falls back to English when the game lacks it)

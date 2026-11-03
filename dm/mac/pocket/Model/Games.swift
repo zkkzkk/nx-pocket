@@ -44,6 +44,7 @@ struct MacGame: Identifiable, Equatable {
     var icon: NSImage?
     var buildDir: URL?              // <title ID>_build: the NSP script's work folder
     var pack: URL?                  // the game pack made from it
+    var macApp: URL?                // its Mac version (MacVersion), in its build folder
     var packMade: Date?
     var scanned = false             // false: only its folder is known yet (the scan runs off the main thread)
     var id: String { folder.path }
@@ -54,7 +55,7 @@ struct MacGame: Identifiable, Equatable {
     var prepared: Bool { buildDir.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("xcode/Gen/resources.env").path) } ?? false }
 
     static func == (a: MacGame, b: MacGame) -> Bool {
-        a.folder == b.folder && a.scanned == b.scanned && a.files == b.files && a.name == b.name && a.version == b.version && a.buildDir == b.buildDir && a.pack == b.pack && a.packMade == b.packMade && (a.icon == nil) == (b.icon == nil)
+        a.folder == b.folder && a.scanned == b.scanned && a.files == b.files && a.name == b.name && a.version == b.version && a.buildDir == b.buildDir && a.pack == b.pack && a.packMade == b.packMade && a.macApp == b.macApp && (a.icon == nil) == (b.icon == nil)
     }
 
     static let gameExtensions: Set<String> = ["nsp", "xci", "nsz", "xcz"]
@@ -99,6 +100,7 @@ struct MacGame: Identifiable, Equatable {
                 }
             }
         }
+        g.macApp = g.buildDir.flatMap { MacVersion.app(in: $0) }
         // its game pack: the game pack folder's newest with its title ID (else, before the title ID is known, with its file name), else the newest .nxpack in its own folder
         if let p = packs.first(where: { e in g.titleID.map { e.titleID == $0 } ?? (e.url.lastPathComponent == g.packName) }) { g.pack = p.url; g.packMade = p.made }
         else if let p = items.filter({ $0.pathExtension == "nxpack" && !$0.lastPathComponent.hasPrefix(".") })   // not build_pack.py's work in progress (.<name>…)
