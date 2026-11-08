@@ -11,6 +11,11 @@ static int hid_usleep(useconds_t usec);
 #undef clock_gettime
 #undef usleep
 #include "../pad_slots.h"
+void dm_oe_execute(int index, const void *param, size_t n) { (void)index; (void)param; (void)n; }   // DM_CTL "program", "webshot": not exercised here
+void front_web_shot(const char *path) { (void)path; }
+// The controller applet's prompt (front.h): -1 is no window; a test sets the answer and the players that join while it is up
+static int g_prompt_answer = -1, g_prompt_calls, g_prompt_min, g_prompt_max; static uint32_t g_prompt_join;
+int front_ctrl_support(int min, int max) { g_prompt_calls++; g_prompt_min = min; g_prompt_max = max; if (g_prompt_join) dm_pad_players(g_prompt_join); return g_prompt_answer; }
 
 static int checks, fails, g_mode = 1, g_signals;
 static void *g_signalled;
@@ -39,6 +44,7 @@ void hle_bind_system_event(void *g, int autoclear) { (void)g; (void)autoclear; }
 void hle_signal_system_event(void *g) { g_signalled = g; g_signals++; }
 int hle_signal_bound_system_event(void *g) { g_signalled = g; g_signals++; return 1; }
 void dm_gfx_texlist(int target) { (void)target; }
+void dm_gfx_restop(void) {}
 void dm_gfx_texraw(uint64_t serial, const char *path) { (void)serial; (void)path; }
 void dm_ctl_peek(uint64_t a, int n) { (void)a; (void)n; }
 void crash_dump_now(const char *why) { (void)why; }
@@ -107,7 +113,24 @@ static void t_npads(void) {
     CHECK(h_hid_ShowCtrl(info, arg) == RES_CTRL_CANCELED && info[0] == 2, "fewer players than the game's minimum: canceled (2202-3101), as the player closing the applet");
     CHECK(h_hid_ShowCtrl0(arg) == RES_CTRL_CANCELED, "the overload without a result: canceled too");
     arg[0] = 2; CHECK(h_hid_ShowCtrl0(arg) == RES_OK, "the overload without a result: OK when the minimum is met");
-    CHECK(applet_opens == 5 && applet_depth == 0, "every answer opened and closed its applet");
+    CHECK(g_prompt_calls == 2 && g_prompt_min == 3 && g_prompt_max == 4, "below the minimum the front end's prompt is asked, with the game's minimum and maximum");
+    {   // GitHub issue #1640: with a window the prompt waits for players to join
+        int calls = g_prompt_calls; arg[0] = 3; arg[1] = 4;
+        g_prompt_answer = 1; g_prompt_join = 0x7;
+        CHECK(h_hid_ShowCtrl(info, arg) == RES_OK && info[0] == 3, "a third player joins while the prompt is up: OK with three");
+        g_prompt_join = 0x3; dm_pad_players(0x3);
+        CHECK(h_hid_ShowCtrl(info, arg) == RES_CTRL_CANCELED && info[0] == 2, "the prompt done with fewer than the minimum: canceled all the same");
+        g_prompt_answer = 0; g_prompt_join = 0x7;
+        CHECK(h_hid_ShowCtrl(info, arg) == RES_CTRL_CANCELED && info[0] == 3, "the player closes the prompt (B): canceled, whoever joined");
+        dm_pad_players(0x3); g_prompt_answer = 1; g_prompt_join = 0;
+        setenv("DM_CTL", "/nonexistent", 1);
+        CHECK(h_hid_ShowCtrl(info, arg) == RES_CTRL_CANCELED && g_prompt_calls == calls + 3, "scripted input (DM_CTL): no prompt, canceled at once");
+        unsetenv("DM_CTL");
+        arg[0] = 2; CHECK(h_hid_ShowCtrl(info, arg) == RES_OK && g_prompt_calls == calls + 3, "the minimum met: no prompt");
+        g_prompt_answer = -1;
+    }
+    CHECK(h_hid_Strap() == RES_OK && h_hid_StrapArg(arg) == RES_OK, "both strap guide overloads answer as the player closing the guide");
+    CHECK(applet_opens == 12 && applet_depth == 0, "every answer opened and closed its applet");
     arg[0] = 1;
     CHECK(six_connected(0x0100 | 0) && !six_connected(0x0200 | 0), "player 2 has a six-axis sensor, No3 none");
 
@@ -177,6 +200,7 @@ static void t_vibration(void) {
     CHECK(!memcmp(&got, &v, sizeof v) && vibration[1].motor[0].amplitude_low == 0, "game value is retained for the addressed player only");
     h_hid_VibInfo(info, &h[1]); CHECK(info[0] == 1 && info[1] == 2, "right motor is a right LRA");
     CHECK(h_hid_VibMounted(&h[0]) && h_hid_VibMounted(&h[1]), "both motors of a routed controller are mounted");
+    CHECK(h_hid_VibMountedOunce(&h[0]) && h_hid_VibMountedOunce(&h[1]) && !h_hid_VibMountedOunce(NULL), "the Switch 2's form answers the same");
     uint32_t invalid[] = {0, 0x20003, 0x1000003, 0x203};
     int mounted = 0;
     for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) mounted |= h_hid_VibMounted(&invalid[i]);
@@ -201,7 +225,9 @@ static void t_vibration(void) {
     dm_haptics_route(1, 0);
     CHECK(!h_hid_VibPermit(), "disconnecting the last output disables vibration");
     dm_haptics_init(vibration_sink, 0); dm_haptics_route(0, 1);
-    CHECK(!h_hid_VibPermit() && !h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD), "rumble disabled: no vibration devices");
+    CHECK(!h_hid_VibPermit() && h_hid_VibHandles(h, 2, &id, STYLE_HANDHELD) == 2, "rumble disabled: not permitted, but the handles exist, as on a Switch");
+    dm_haptics_set_enabled(1);
+    CHECK(h_hid_VibPermit(), "rumble turned on while the game runs: the handles it took work");
 }
 
 static void *vibration_sender(void *arg) {
@@ -508,6 +534,30 @@ int main(void) {
     t_motion_live();
     t_motion_hid();
     t_rec();
+    {   // Nmouse with no device (SDK 21's forms): the pointer range is kept, the merged handle 0 takes settings, the standard mouse and the handle queries report nothing
+        int w = 0, h = 0; uint64_t std = 7; uint32_t npad = 9;
+        h_hid_NmouseInitT(NULL, 0, 1920, 1080, 1); h_hid_NmouseGetRange(&w, &h);
+        CHECK(w == 1920 && h == 1080, "InitializeNmouse with a pointer type keeps the range");
+        h_hid_NmouseSetRange(1280, 720); h_hid_NmouseGetRange(&w, &h);
+        CHECK(w == 1280 && h == 720, "SetNmousePointerRanges is what GetNmousePointerRanges reads");
+        CHECK(!h_hid_NmouseStd(&std) && std == 7, "no standard mouse handle");
+        uint64_t merged = 1; CHECK(h_hid_NmouseMerged(&merged) && merged == 0, "the merged handle is 0");
+        CHECK(h_hid_NmouseEnable(merged, 0x101) && h_hid_NmousePos(merged, 10, 10), "the merged handle takes the pointer settings (a bool argument's high bits ignored)");
+        CHECK(!h_hid_NmouseEnable(5, 1) && !h_hid_NmousePos(5, 0, 0), "an unknown handle does not");
+        CHECK(!h_hid_NmouseState(NULL, merged) && !h_hid_NmouseNpad(&npad, merged) && npad == 9, "no state and no controller behind the merged handle");
+    }
+    {   // DM_PAD_PRESS_TO_JOIN=1: the lowest free slot at the first press, not the slot a controller of that name held before
+        pad_slots q = {0}; static char x, y, z;   // distinct addresses
+        CHECK(pad_slot_take_lowest(&q, &x, "Pro Controller") == 0, "press: the first to press is player 1");
+        CHECK(pad_slot_take_lowest(&q, &y, "Pro Controller") == 1, "press: the next is player 2, even of the same model");
+        CHECK(pad_slot_take_lowest(&q, &x, "Pro Controller") == 0, "press: pressing again keeps the slot");
+        pad_slot_free(&q, &x);
+        CHECK(pad_slot_take_lowest(&q, &z, "Xbox Wireless Controller") == 0, "press: a freed player 1 goes to whoever presses next, whatever its name");
+        pad_slots f = {0}; static char o[DM_PLAYERS + 1];
+        for (int i = 0; i < DM_PLAYERS; i++) pad_slot_take_lowest(&f, &o[i], "pad");
+        CHECK(pad_slot_take_lowest(&f, &o[DM_PLAYERS], "pad") == -1, "press: none left when every player is held");
+        CHECK(pad_slot_take_lowest(&f, NULL, "pad") == -1, "press: no owner, no slot");
+    }
     printf("hid players: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

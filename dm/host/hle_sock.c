@@ -376,7 +376,6 @@ long dm_sock_sendto(int s, const void *buf, unsigned long n, int flags, const vo
 }
 
 // Poll / Select: the guest's descriptors translated, waited for in the host; an unknown one reports POLLNVAL as the kernel does
-typedef struct { int32_t fd; int16_t events, revents; } sk_pollfd;
 int dm_sock_poll(void *fds, uint64_t n, int ms) {
     if (n > 256) return fail(EINVAL);
     sk_pollfd *g = fds; struct pollfd p[256]; int bad = 0;

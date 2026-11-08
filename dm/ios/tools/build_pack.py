@@ -9,7 +9,7 @@ A pack is a folder:
                    holds (PackSign.c), so one pack plays in anyone's NX Pocket
   dm/              the rewriter tables, shader tables, launcher.json and font, as in the app (build_ipa.sh)
   romfs.img        the game files (or romfs/), aoc/ and pso/ when the game has them
-  msl.aar          the shader libraries (msl/<chain>/: tens of thousands of small files) as one Apple Archive, lzfse-compressed (`aa archive`), which NX Pocket unpacks
+  msl.aar          the shader libraries (msl/<chain>/: tens of thousands of small files, or msl/<chain>.img, one file) as one Apple Archive, lzfse-compressed (`aa archive`), which NX Pocket unpacks
                    on the phone before the game first starts (PackArchive.swift): a pack then copies to a phone as a few hundred files, not a hundred thousand
                    (format 2; --format 1 keeps msl/ as a folder, for an NX Pocket from before format 2)
 
@@ -67,7 +67,18 @@ ALIGN_ROMFS, ALIGN = 64 << 10, 16 << 10
 
 
 def msl_archive(shaders, msldir, dst):
-    """msl/<msldir>/ as one Apple Archive, straight from the build's shader folder (aa renames its paths): no copy of its tens of thousands of files is made"""
+    """msl/<msldir>/ as one Apple Archive, straight from the build's shader folder (aa renames its paths): no copy of its tens of thousands of files is made.
+    An NVN game's libraries can be one file instead, <msldir>.img (dm/tools/shader_lib.py), which the host reads as it is: the archive then holds that file,
+    so NX Pocket unpacks it into msl/ as before"""
+    if shaders.is_file():
+        stage = dst.with_name('.' + dst.name + '.stage')
+        if stage.exists(): shutil.rmtree(stage)
+        stage.mkdir(parents=True)
+        try:
+            clone(shaders, stage / f'{msldir}.img')
+            subprocess.run(['aa', 'archive', '-d', str(stage), '-o', str(dst), '-a', 'lzfse'], check=True)
+        finally: shutil.rmtree(stage)
+        return
     subprocess.run(['aa', 'archive', '-d', str(shaders.parent), '-subdir', shaders.name, '-rename', shaders.name, msldir, '-o', str(dst), '-a', 'lzfse'], check=True)
 
 
@@ -117,6 +128,9 @@ def single_file(folder, out, romfs_source=None, full=False):
         icon4x = folder / 'icon@4x.png'
         if not icon4x.is_file() and (folder / 'icon.png').is_file():   # a pack made before icon@4x: made now, from its icon
             icon4x = out.with_name('.' + out.name + '.icon@4x.png'); made.append(icon4x); upscale_icon(folder / 'icon.png', icon4x)
+        if not shaders and (folder / 'msl' / (pack['shaders'] + '.img')).is_file():   # format 1 with the libraries as one file
+            m = out.with_name('.' + out.name + '.msl.aar'); made.append(m)
+            msl_archive(folder / 'msl' / (pack['shaders'] + '.img'), pack['shaders'], m); shaders = [(m, 'msl')]
         if not shaders and (folder / 'msl' / pack['shaders']).is_dir():   # format 1: its shader folder, archived from where it is
             m = out.with_name('.' + out.name + '.msl.aar'); made.append(m)
             msl_archive(folder / 'msl' / pack['shaders'], pack['shaders'], m); shaders = [(m, 'msl')]
@@ -333,7 +347,7 @@ def main():
         msl_archive(Path(res['DM_RESOURCE_SHADERS']), msldir, part / 'msl.aar')
         archives.append({'file': 'msl.aar', 'folder': 'msl'})
     else:
-        clone(Path(res['DM_RESOURCE_SHADERS']), part / 'msl' / msldir)
+        sh = Path(res['DM_RESOURCE_SHADERS']); clone(sh, part / 'msl' / (f'{msldir}.img' if sh.is_file() else msldir))
     if res.get('DM_RESOURCE_AOC'): clone(Path(res['DM_RESOURCE_AOC']), part / 'aoc')
     if res.get('DM_RESOURCE_PSO'): clone(Path(res['DM_RESOURCE_PSO']), part / 'pso')
     # the icon: the game's own (its control data's 256×256, saved by the extraction beside the game files) as it is, and icon@4x.png, 1024×1024, made from it on this

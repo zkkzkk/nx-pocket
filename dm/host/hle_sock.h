@@ -2,6 +2,7 @@
 // The hooks stay in hle_net.c / hle_offline.c / hle_misc.c and hand over here when dm_net_on(); with DM_NET unset every one of them keeps its offline answer.
 #pragma once
 #include <stdint.h>
+typedef struct { int32_t fd; int16_t events, revents; } sk_pollfd;   // the guest's pollfd (hle_net.c dm_sk_poll, hle_sock.c dm_sock_poll)
 
 int dm_net_on(void);          // DM_NET=lan (never with the deterministic clock)
 int dm_net_nifm(void);        // DM_NET_NIFM=1 as well: nifm reports the LAN as an available network (off by default, so online features keep their offline branch)

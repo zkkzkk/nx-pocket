@@ -20,6 +20,13 @@ Guest threads, their synchronization and how the host schedules them. Each entry
 - **Check:** `make -C dm/host/tests GAME=010038B015560000 preempt` delays the child's host dispatch by 1 ms and 20 ms. With `DM_PREEMPT=0`, both delayed starts failed before the fix. Afterward both `DM_PREEMPT=0` and `1` pass; the broader mode already supplied the handoff before this correction. Equal-priority, other-core, migratable, host-helper, suspended and host-GPU-work children do not hold up the caller.
 - **Found on:** the threading audit of [FINAL FANTASY TACTICS](../../dm/games/010038B015560000/README.md#threads); its affected workers are lower priority and initially migratable, so this correction does not remove its local wake cut.
 
+### A thread's arguments in slots its starter reuses after connecting to a service
+
+- **Symptom:** a crash at the very start of a new thread, reading through a null pointer it took from its argument (`main+0x1dc0`, in a boot stub's last thread, about once in a dozen boots), with the starter still in its next few calls.
+- **Cause:** the thread reads its arguments from its starter's stack, and the starter reuses those slots a few calls after `StartThread`. [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md)'s boot stub builds them at `main+0x97c`, starts the thread and calls `nn::ro::Initialize`, then builds a string in them at `main+0xa04`. On Horizon `Initialize` connects to ldr:ro, several round trips, so the thread has long read them. The host's `Initialize` returned at once.
+- **Fix:** `dm_thread_service_connect` (`hle_thread.c`), called by the host's `ro::Initialize`, waits until the threads started so far have been dispatched into guest code (at most 50 ms), then for a round trip (200 µs). Only `ro::Initialize` calls it so far. **Open:** like [File system calls are service requests](#file-system-calls-are-service-requests), this models a time rather than giving an order: the thread could still be stopped by the Mac between its dispatch and its read.
+- **Found on:** [Mario Tennis Fever](../../dm/games/0400D4201C6EA000/README.md).
+
 ### Core mask changes move the ideal core into the new mask
 
 - **Symptom:** per-core job queues never drained.
@@ -111,6 +118,13 @@ Guest threads, their synchronization and how the host schedules them. Each entry
 - **Also:** the tighter scheduling exposed a host texture bug: a texture once packaged (CPU-written) and judged not packaged at a later lookup returned the `NvPkg` holder instead of its Metal texture (`-[NvPkg gpuResourceID]: unrecognized selector`, `nvn_mtl.m` `tex_mtl_`); the holder is unwrapped now.
 - **Found on:** [Super Mario Maker 2](../../dm/games/01009B90006DC000/README.md) 3.0.3 (SDK 7.3.2).
 
+### Watchdog sample output paths are literal arguments
+
+- **Symptom:** `watchdog: sampling failed` and no thread stacks when `DM_WATCH_SAMPLE` contains an apostrophe, such as `/tmp/John's Mac/hang.txt`; shell syntax in the path can also run commands, and long paths are truncated.
+- **Cause:** `crash.c` interpolated the path into a single-quoted command in a fixed-size buffer, then called `system()`. An apostrophe ends the shell quote.
+- **Fix:** spawn `/usr/bin/sample` directly with the PID, one-second duration, `-f` and the unchanged path as separate arguments. Spawn file actions redirect stdout and stderr to `/dev/null`. Setup, spawn, wait, nonzero exit and signal failures retain the failure log; an interrupted wait resumes. The watchdog still exits with `128 + SIGALRM` after sampling.
+- **Found on:** the [static-analysis audit in issue #313](https://github.com/seedds/nxnative/issues/313#issuecomment-6543080671), reproduced with synthetic paths; no game-specific failure is claimed.
+
 ## Synchronization and address arbitration
 
 ### `SignalToAddress` type 2 with count ≤ 0
@@ -133,6 +147,14 @@ Guest threads, their synchronization and how the host schedules them. Each entry
 - **Fix:** a per-build cut turns each of those loads into a load-acquire (`ldar`), which a store-release before it orders after the store (eight sites in that build's `patches.py`); 14 of 14 runs boot and keep presenting.
 - **Found on:** [FINAL FANTASY CRYSTAL CHRONICLES Remastered Edition](../../dm/games/0100CE4010AAC000/README.md) 1.0.0 and 1.0.3 (Unity 2018.4.2f1, SDK 8.2.1; its `patches.py`: 1.0.0 `main+0x1e425b0` and the stream functions after it, the same sites +0x25380 in 1.0.3).
 - **Check:** another Unity title that stops this way: look for `stlr` followed by a plain `ldr` of the other word in its `ThreadedStreamBuffer` (the functions around the `AcquireSemaphore` the worker waits in).
+
+### Trinity's rendezvous loses its release on Apple cores
+
+- **Symptom:** the picture stops and sound goes on, at a random frame (3,000 to 51,300, about 100 s at the quickest), with no `[RED]` line and the GPU idle and caught up. `main` is parked in `nn::os::WaitConditionVariable`, called from the park in Trinity's submit loop. The release flag is set, the state word is 1, the mutex is free, and no `SignalProcessWideKey` was ever issued for that key.
+- **Cause:** a memory-order race in the game's code, not a host bug. The completer sets the release flag with a plain `strb`, then reads the main thread's state word with `ldar`, and returns without a wake if it is 2. A load-acquire does not order an earlier plain store, so the flag can stay invisible after that read. Main left the state at 2 when it woke its own participant at the start of the submit, and it runs out of work about when the completer runs. It resets the state to 0, reads the flag as 0, sets the state to 1 and parks; then the flag lands and nothing wakes it. Main's side is ordered (its `stlr` is followed by a spinlock's `ldaxr`), so the completer's pair alone allows this. Armv8 allows it on the Switch's Cortex-A57 too; whether it happens there is not known.
+- **Fix:** `patch_nso.py` puts `dmb ish` between the store and the load (`trinity_completer_sites`), in any module with exactly one function of that shape; several change nothing and give a red line. The function has no free word, so `mov x29,sp` gives up its own: backtraces skip this frame, and nothing in it reads x29, since its frame holds only the saved registers. The binding is `engine`: no build ID or fingerprint, so an update that keeps the code keeps the fix. Of the 542 rewritten modules on the game drive, only Scarlet 1.0.0's `main` matches. No host change can do this: TSO allows the same reordering, and a spurious wake only re-checks the event, which stays signalled.
+- **Check:** a standalone test of the two instruction sequences on an M4 Pro lost the release in 13,515 of 2,000,000 rounds with main's path about 110 ns longer, in 15 at about 1.6 µs and in none at about 6 µs; with the barrier, in none of 15,000,000. **Open:** this is the code and that test, not a run of the game. Proving it takes long clean runs of a build that froze, past the 94,800 frames an earlier clean run reached.
+- **Found on:** [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md#threads) 4.0.0 ([issue #1250](https://github.com/seedds/nxnative/issues/1250)); the completer read in 1.0.0 (`main+0x28f872c`), and 4.0.0's at `main+0x2d0010c` by the issue's addresses. The same park appears in a [Violet 1.0.0 report](https://github.com/seedds/nxnative/issues/271#issuecomment-6549600165). Issue #1250 says Legends: Z-A has the same rendezvous; not checked, and if its completer has another shape it does not match.
 
 ### Lock acquire without acquire ordering runs a queue item twice
 
@@ -203,6 +225,13 @@ The yield back-off (`DM_YIELD_BACKOFF`) and the rewriter's spin waits (`patch_ns
 - **Check:** a temporary per-thread count of the yields only this rule keeps in a run, and of the back-off sleeps those runs then took, on boots and play of other games: Tears of the Kingdom's main thread and ModuleSystem workers about 0.1% of their yields (761 of 926,116 on the main thread in 120 s) and no back-off sleep; Breath of the Wild outdoors at most 7 per thread in 150 s, no back-off sleep; Three Houses up to 95 per thread, Donkey Kong Country: Tropical Freeze about 1,000 on the main thread, neither with a back-off sleep from them; Kirby at most 1; Celeste, BALL x PIT, Bayonetta and Ghost Trick none. Their frame rates matched `main` in runs that kept the window's focus (a run whose window loses focus to another app drops to about 30 fps, on `main` as well).
 
 ## Events and notifications
+
+### Synchronization waits retain objects and completed notifications
+
+- **Symptom:** a wait times out after its event was signaled and cleared; closing and reusing a handle redirects a blocked wait to an unrelated event, or a wait on an exiting thread never completes. A signaled first entry also hides an invalid later handle. `ResetSignal` on a thread handle returns `0xfa01` (invalid state) instead of `0xe401` (invalid handle).
+- **Cause:** `WaitSynchronization` kept the caller's handle array and looked up its numbers again after waking. It neither retained the original objects nor recorded which signal completed the wait. Event and thread destruction followed handle ownership alone. The event SVCs treated a thread handle given to `ResetSignal` as a resettable object in the wrong state; the kernel accepts only a readable event (or a process) there, and invalid state means a readable event that is already clear.
+- **Fix:** as Horizon's `KSynchronizationObject::Wait`: reject more than 64 handles (`0xee01`), copy the handles and resolve every one (any invalid handle, the current-thread pseudo-handle and an event's write end included, is `0xe401`), and retain each event or thread until the wait returns, in the thread's own record (`thr_t.wobjs`, as the kernel's per-thread sync object buffer). Notification records the first matching index under `G`; later clearing or closing cannot undo completion. Thread reclamation waits for outstanding wait references. Ready objects, then a zero-time poll, precede a pending cancellation, and `CancelSynchronization` completes a blocked wait at once or else marks the next one. `ResetSignal` returns invalid handle for anything but a readable event. The short-poll back-off and deterministic-clock waits are unchanged.
+- **Found on:** synthetic host regressions in [`t_sync_wait.c`](../../dm/host/tests/t_sync_wait.c); six of its seven groups fail on the host before the fix (all but cancel-release). No game failure is known.
 
 ### Service-event producers follow the binding lifetime
 

@@ -135,15 +135,51 @@ class Matching(unittest.TestCase):
         with self.assertRaisesRegex(MatchError, 'original bytes differ'): Image(self.original, 0x2000).match(rule)
 
     def test_relocations_in_replacement_are_rejected(self):
-        for w in (B(0, 4), ADRP(0, 0, 0x1000), 0x58000020):
+        for w in (B(0, 0x1000), ADRP(0, 0, 0x1000), 0x58000020):
             rule = copy.deepcopy(self.rule); rule['cuts'][0] = (8, 'e00317aa', struct.pack('<I', w).hex(), 'heap')
             with self.assertRaisesRegex(ValueError, 'PC-relative'): validate(rule)
+
+    def test_replacement_branches_must_stay_inside_the_function(self):
+        def cut(w): return (8, 'e00317aa', struct.pack('<I', w).hex(), 'heap')
+        for target in (-8, 16):  # the function's first instruction and its last, from the cut at +8
+            rule = copy.deepcopy(self.rule); rule['cuts'][0] = cut(B(0, target)); validate(rule)
+        for target in (-12, 20):  # before the function and just past it
+            rule = copy.deepcopy(self.rule); rule['cuts'][0] = cut(B(0, target))
+            with self.assertRaisesRegex(ValueError, 'PC-relative'): validate(rule)
+        # The second word of a replacement counts from its own place
+        rule = copy.deepcopy(self.rule); rule['cuts'][0] = (8, 'e00317aa' + '00000014', struct.pack('<II', NOP, B(0, 16)).hex(), 'heap')
+        with self.assertRaisesRegex(ValueError, 'PC-relative'): validate(rule)
+
+    def test_trap_word_is_read_and_fingerprinted(self):
+        words = caller(0x100, 0x500)
+        def fingerprint(callee): return Image(image({0x100: words, 0x500: callee}), 0x2000).fingerprint(0x100)
+        trapped = fingerprint([0xd2800020, RET, 0xe7ffdefe])
+        self.assertNotEqual(trapped, fingerprint([0xd2800020, RET, 0xd4200000]))   # the word itself counts, not the brk it is read as
+        with self.assertRaisesRegex(MatchError, 'undecodable'): fingerprint([0xd2800020, RET, 0xffffffff])  # any other undecodable word still refuses
 
     def test_no_boundaries_and_ambiguous_match_are_reported(self):
         for img in (bytearray(0x40), image({0x100: [RET]})):
             messages = []
             self.assertEqual(resolve(img, len(img), [self.rule], messages.append), [])
             self.assertTrue(messages[0].startswith('[RED] '))
+
+    def test_frame_step_rule_locates_its_function_or_nothing(self):
+        # MATCH_FRAME_STEP: the stub gets the start of the one matching function, wherever the build put it; none or two give a red line and no stub
+        from nso_match import locate_stub
+        stub = dict(name='step', size=self.rule['size'], fingerprints=self.rule['fingerprints'], stub=lambda ctx: None)
+        moved = image({0x800: caller(0x800, 0x1200, 0x2980), 0x1200: [0xd2800020, RET]})
+        messages = []
+        self.assertEqual(locate_stub(moved, 0x2000, [stub], messages.append), (stub, 0x800))
+        self.assertFalse([m for m in messages if m.startswith('[RED]')], messages)
+        duplicate = image({0x100: caller(0x100, 0x500), 0x800: caller(0x800, 0x500), 0x500: [0xd2800020, RET]})
+        for img in (duplicate, image({0x100: [RET]})):
+            messages = []
+            self.assertIsNone(locate_stub(img, 0x2000, [stub], messages.append))
+            self.assertTrue(messages[0].startswith('[RED] frame step'), messages)
+        self.assertIsNone(locate_stub(moved, 0x2000, [], messages.append))
+        with self.assertRaisesRegex(ValueError, 'one frame step'): locate_stub(moved, 0x2000, [stub, dict(stub, name='other')], messages.append)
+        with self.assertRaisesRegex(ValueError, 'stub'): locate_stub(moved, 0x2000, [dict(stub, stub=None)], messages.append)
+        with self.assertRaisesRegex(ValueError, 'name, size'): locate_stub(moved, 0x2000, [dict(stub, cuts=[])], messages.append)
 
     def test_overlapping_rules_are_rejected(self):
         other = dict(self.rule, name='another patch')

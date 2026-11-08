@@ -20,7 +20,7 @@ No patches; everything it needed is general host or tool behaviour (below).
 - **Resolved: a call through a null pointer in the host's `movie::Decoder::Configure` at the first movie.** `main` imports only SDK 4's base-object constructor: [The base-object `movie::Decoder` constructors](../../../docs/reference/movies.md#the-base-object-moviedecoder-constructors).
 - **Resolved: abort in the game's allocator (`main+0x62aac`) as a court loads.** About 7,400 per-object command buffers sized by `GetCommandMemoryUsed` in a 16 MB command pool (`main+0x96824`; the pool is set up at `main+0x8760`, flags 0x12): [Per-object command buffers sized by the count](../../../docs/reference/nvn-objects.md#per-object-command-buffers-sized-by-the-count). Now 14.95 MB at the peak on Marina Stadium; other courts are not measured.
 - **Resolved: 1,388 shaders found, most draws missing from the map.** Models and effects keep their BNSH in packed NARC members: [Camelot's NARC archives and their packed members](../../../docs/reference/shaders.md#camelots-narc-archives-and-their-packed-members). 21,703 shaders now.
-- **Resolved: matches and the Adventure map showed only the HUD.** Two causes, one after the other: [`CopyCommands` copies the commands](../../../docs/reference/nvn-objects.md#copycommands-copies-the-commands) (the court and players were missing from the G-buffer) and [sRGB and linear texture objects on one storage](../../../docs/reference/rendering.md#srgb-and-linear-texture-objects-on-one-storage) (the tone-mapped picture never reached the window).
+- **Resolved: matches and the Adventure map showed only the HUD.** Two causes, one after the other: [`CopyCommands` copies the commands](../../../docs/reference/nvn-objects.md#copycommands-copies-the-commands) (the court and players were missing from the G-buffer) and [Textures of an sRGB / linear pair over the same storage](../../../docs/reference/rendering.md#textures-of-an-srgb--linear-pair-over-the-same-storage) (the tone-mapped picture never reached the window).
 
 ## Input
 
@@ -51,7 +51,7 @@ No patches; everything it needed is general host or tool behaviour (below).
 - [The base-object `movie::Decoder` constructors](../../../docs/reference/movies.md#the-base-object-moviedecoder-constructors) (`hle_movie.c`).
 - [Per-object command buffers sized by the count](../../../docs/reference/nvn-objects.md#per-object-command-buffers-sized-by-the-count) and [`CopyCommands` copies the commands](../../../docs/reference/nvn-objects.md#copycommands-copies-the-commands) (`hle_nvn.c`).
 - [Camelot's NARC archives and their packed members](../../../docs/reference/shaders.md#camelots-narc-archives-and-their-packed-members) (`shader_split.py`).
-- [sRGB and linear texture objects on one storage](../../../docs/reference/rendering.md#srgb-and-linear-texture-objects-on-one-storage) (`nvn_mtl.m`).
+- [Textures of an sRGB / linear pair over the same storage](../../../docs/reference/rendering.md#textures-of-an-srgb--linear-pair-over-the-same-storage) (`nvn_mtl.m`).
 
 ## Open
 

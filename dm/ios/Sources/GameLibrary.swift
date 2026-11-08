@@ -97,8 +97,8 @@ struct PackInfo: Decodable, Equatable {
         }
         if file { return (p, c) }   // the library and the shaders are in its extract.aar
         let shadersPacked = p.archives?.contains { $0.folder == "msl" && fm.fileExists(atPath: url.appendingPathComponent($0.file).path) } ?? false
-        if !shadersPacked && !fm.fileExists(atPath: url.appendingPathComponent("msl").appendingPathComponent(p.shaders).path)
-            && !fm.fileExists(atPath: GameLibrary.unpackedFolder(p.titleID).appendingPathComponent("msl").appendingPathComponent(p.shaders).path) {
+        let msls = [url, GameLibrary.unpackedFolder(p.titleID)].map { $0.appendingPathComponent("msl") }   // msl/<shaders>/, or msl/<shaders>.img (one file, the host reads either)
+        if !shadersPacked && !msls.contains(where: { fm.fileExists(atPath: $0.appendingPathComponent(p.shaders).path) || fm.fileExists(atPath: $0.appendingPathComponent(p.shaders + ".img").path) }) {
             c.shaders = String(format: tr("Shader libraries (msl/%@) are missing."), p.shaders)
         }
         return (p, c)
