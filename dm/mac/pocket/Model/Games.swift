@@ -47,6 +47,7 @@ struct MacGame: Identifiable, Equatable {
     var macApp: URL?                // its Mac version (MacVersion), in its build folder
     var packMade: Date?
     var scanned = false             // false: only its folder is known yet (the scan runs off the main thread)
+    var switch2: Switch2Source?     // a Switch 2 game: its files as a dump folder or one NUP container, which need no prod.keys
     var id: String { folder.path }
 
     var base: GameFile? { files.first { $0.kind == .base } }
@@ -55,13 +56,14 @@ struct MacGame: Identifiable, Equatable {
     var prepared: Bool { buildDir.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("xcode/Gen/resources.env").path) } ?? false }
 
     static func == (a: MacGame, b: MacGame) -> Bool {
-        a.folder == b.folder && a.scanned == b.scanned && a.files == b.files && a.name == b.name && a.version == b.version && a.buildDir == b.buildDir && a.pack == b.pack && a.packMade == b.packMade && a.macApp == b.macApp && (a.icon == nil) == (b.icon == nil)
+        a.folder == b.folder && a.scanned == b.scanned && a.files == b.files && a.name == b.name && a.version == b.version && a.buildDir == b.buildDir && a.pack == b.pack && a.packMade == b.packMade && a.macApp == b.macApp && a.switch2 == b.switch2 && (a.icon == nil) == (b.icon == nil)
     }
 
     static let gameExtensions: Set<String> = ["nsp", "xci", "nsz", "xcz"]
 
-    /// Reads a game folder: its files, its build folder and what the build extracted, its game pack (`packs`: the game pack folder's, PackEntry.index)
-    static func scan(_ folder: URL, packs: [PackEntry] = []) -> MacGame {
+    /// Reads a game folder: its files, its build folder and what the build extracted, its game pack (`packs`: the game pack folder's, PackEntry.index); `repo`: the
+    /// checkout whose profile names a Switch 2 game, whose files carry no control data
+    static func scan(_ folder: URL, packs: [PackEntry] = [], repo: String = "") -> MacGame {
         let fm = FileManager.default
         var g = MacGame(folder: folder, name: folder.lastPathComponent, scanned: true)
         let items = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
@@ -77,9 +79,10 @@ struct MacGame: Identifiable, Equatable {
             g.files.append(GameFile(url: u, kind: kind, titleID: tid, version: ver, size: size))
         }
         g.files.sort { ($0.kind.rawValue, $0.url.lastPathComponent) < ($1.kind.rawValue, $1.url.lastPathComponent) }
+        if g.files.isEmpty, let s = Switch2Source.scan(folder, items: items) { g.switch2 = s.source; g.files = s.files; g.titleID = s.titleID; g.version = s.files.last { $0.kind == .update }.map { "v\($0.version ?? 0)" } }
         // the base game's title ID: the base file's, else derived from an update's or a DLC's
-        if let t = g.base?.titleID { g.titleID = t }
-        else if let t = g.files.compactMap(\.titleID).first, let v = UInt64(t, radix: 16) {
+        if g.titleID == nil, let t = g.base?.titleID { g.titleID = t }
+        else if g.titleID == nil, let t = g.files.compactMap(\.titleID).first, let v = UInt64(t, radix: 16) {
             let base = v & 0xFFF == 0x800 ? v & ~0xFFF : (v & ~0xFFF) - 0x1000
             g.titleID = String(format: "%016llX", base)
         }
@@ -100,6 +103,8 @@ struct MacGame: Identifiable, Equatable {
                 }
             }
         }
+        // a Switch 2 dump has no control data (a NUP may carry some, which the build extracts as above): its name is its profile's
+        if g.switch2 != nil, g.name == folder.lastPathComponent, let n = Switch2Source.profileName(g.titleID, repo: repo) { g.name = n }
         g.macApp = g.buildDir.flatMap { MacVersion.app(in: $0) }
         // its game pack: the game pack folder's newest with its title ID (else, before the title ID is known, with its file name), else the newest .nxpack in its own folder
         if let p = packs.first(where: { e in g.titleID.map { e.titleID == $0 } ?? (e.url.lastPathComponent == g.packName) }) { g.pack = p.url; g.packMade = p.made }

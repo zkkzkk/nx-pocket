@@ -91,6 +91,7 @@ private struct Hero: View {
                     Text([game.version.map { "\(tr("Version")) \($0)" }, game.titleID].compactMap { $0 }.joined(separator: "  ·  "))
                         .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(Palette.soft).textSelection(.enabled)
                     HStack(spacing: 8) {
+                        if game.switch2 != nil { chip("sparkles", "Switch 2") }
                         if let b = game.base { chip("opticaldisc", "\(tr("Base game"))\(b.version.map { " v\($0)" } ?? "")") }
                         if let u = game.updates.last { chip("arrow.up.circle", "\(tr("Update")) v\(u.version ?? 0)") }
                         if !game.dlc.isEmpty { chip("puzzlepiece.extension", String(format: tr("DLC ×%d"), game.dlc.count)) }
@@ -176,7 +177,7 @@ private struct PackCard: View {
         HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(tr("No game pack yet")).font(.system(size: 15, weight: .semibold))
-                Text(model.canBuild ? tr("Making one takes 20 to 60 minutes, depending on the game. You can stop and carry on later: finished stages are kept.")
+                Text(model.canBuild(game) ? tr("Making one takes 20 to 60 minutes, depending on the game. You can stop and carry on later: finished stages are kept.")
                                     : tr("Finish setting up first: the nxnative checkout, a Python and your prod.keys."))
                     .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.support(game).level == .none {
@@ -186,7 +187,7 @@ private struct PackCard: View {
             }
             Spacer()
             Button { make() } label: { Label(tr("Make Game Pack"), systemImage: "shippingbox.fill").padding(.horizontal, 8) }
-                .buttonStyle(.glassProminent).controlSize(.large).disabled(!model.canBuild || game.files.isEmpty)
+                .buttonStyle(.glassProminent).controlSize(.large).disabled(!model.canBuild(game) || game.files.isEmpty)
         }
         .confirmationDialog(tr("Make a pack of a game nxnative has no profile for?"), isPresented: $unsupported) {
             Button(tr("Make Anyway")) { model.enqueue(game) }
@@ -230,7 +231,7 @@ private struct PackCard: View {
             if PackFile.isFile(pack), let airdrop = NSSharingService(named: .sendViaAirDrop) {   // one file: AirDrop takes it to an iPhone, which opens it in NX Pocket
                 Button { airdrop.perform(withItems: [pack]) } label: { Label(tr("AirDrop…"), systemImage: "dot.radiowaves.left.and.right") }
             }
-            Button { make() } label: { Label(tr("Make Again"), systemImage: "arrow.clockwise") }.disabled(!model.canBuild)
+            Button { make() } label: { Label(tr("Make Again"), systemImage: "arrow.clockwise") }.disabled(!model.canBuild(game))
                 .confirmationDialog(tr("The shaders have a new version and are compiled again first. This takes a while."), isPresented: $recompile) {
                     Button(tr("Make Again")) { model.enqueue(game) }
                 } message: {
@@ -281,7 +282,7 @@ private struct MacCard: View {
             }
             Spacer()
             Button { model.playOnMac(game) } label: { Label(tr("Play on Mac"), systemImage: "play.fill").padding(.horizontal, 8) }
-                .buttonStyle(.glassProminent).controlSize(.large).disabled(!model.canBuild || game.files.isEmpty)
+                .buttonStyle(.glassProminent).controlSize(.large).disabled(!model.canBuild(game) || game.files.isEmpty)
         }
     }
 
@@ -298,7 +299,7 @@ private struct MacCard: View {
             }
             Spacer()
             Button { NSWorkspace.shared.activateFileViewerSelecting([app]) } label: { Label(tr("Show in Finder"), systemImage: "folder") }.buttonStyle(.glass)
-            Button { model.enqueue(game, kind: .mac) } label: { Label(tr("Make Again"), systemImage: "arrow.clockwise") }.buttonStyle(.glass).disabled(!model.canBuild)
+            Button { model.enqueue(game, kind: .mac) } label: { Label(tr("Make Again"), systemImage: "arrow.clockwise") }.buttonStyle(.glass).disabled(!model.canBuild(game))
             Button { model.playOnMac(game) } label: { Label(tr("Play on Mac"), systemImage: "play.fill").padding(.horizontal, 6) }.buttonStyle(.glassProminent).controlSize(.large)
         }
     }
@@ -479,7 +480,7 @@ private struct FilesCard: View {
                             .background(Capsule().fill(f.kind == .base ? Palette.accent.opacity(0.8) : f.kind == .update ? Color.blue.opacity(0.7) : Color.purple.opacity(0.7)))
                         Text(f.url.lastPathComponent).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
                         Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file)).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)
+                        Text(f.size > 0 ? ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file) : tr("Folder")).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary)   // a Switch 2 dump's parts
                     }
                     .padding(.vertical, 6)
                     if f.id != game.files.last?.id { Divider() }
@@ -495,6 +496,8 @@ private struct FilesCard: View {
 /// what follows a known name (a version, a count in brackets) is kept. A name not in the table shows with a capital
 enum StageNames {
     static let table: [(String, String, String)] = [
+        ("unpack DLC", "Unpack DLC", "解包 DLC"), ("pack DLC", "Pack DLC", "打包 DLC"),   // a Switch 2 game's NUP or dump folder (pack_nup.py, pack_dump.py)
+        ("unpack v", "Unpack game files v", "解包游戏文件 v"), ("pack v", "Pack game files v", "打包游戏文件 v"), ("check v", "Check game files v", "检查游戏文件 v"),
         ("decompress NSZ", "Decompress NSZ", "解压 NSZ"), ("build ID lookup", "Look up the build", "查找版本"), ("survey", "Survey the game", "分析游戏"),
         ("build nx_extract", "Build the extractor", "编译提取工具"), ("extract DLC", "Extract DLC", "提取 DLC"), ("extract", "Extract game files", "提取游戏文件"),
         ("rewrite", "Rewrite game code", "改写游戏代码"), ("GLSLC capture", "Capture shaders", "捕获着色器"), ("UE shader decode", "Decode shaders", "解码着色器"),

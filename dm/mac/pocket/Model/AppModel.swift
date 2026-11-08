@@ -127,12 +127,26 @@ import Combine
     /// <title ID>_build/control), for a game that shows neither yet
     private var reading: [MacGame.ID: ToolRun] = [:]   // kept until they end (a run holds itself only weakly)
     func readControl(_ g: MacGame) {
-        guard canBuild, g.icon == nil, !g.files.isEmpty, reading[g.id] == nil else { return }
+        if case .nup(let u) = g.switch2, g.titleID == nil { readNUPTitle(g, u); return }
+        guard g.switch2 == nil, canBuild(g), g.icon == nil, !g.files.isEmpty, reading[g.id] == nil else { return }   // a Switch 2 game's control data, when it has any, comes with its build
         let r = ToolRun(title: tr("Read game name and icon"))
         let id = g.id
         reading[id] = r
         r.onFinish = { [weak self] _ in self?.reading[id] = nil; self?.rescan(id) }
         r.start(python, [(repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py"), g.folder.path, "--control-only", "-k", keys])
+    }
+    /// A NUP's title ID (pack_nup.py's scan: the program ID of its code), kept per file (Switch2Source.nupTitles), so its profile shows before anything is built
+    func readNUPTitle(_ g: MacGame, _ nup: URL) {
+        guard !repo.isEmpty, !python.isEmpty, reading[g.id] == nil else { return }
+        let r = ToolRun(title: tr("Read game name and icon"))
+        let (id, key) = (g.id, Switch2Source.key(nup))
+        reading[id] = r
+        r.onFinish = { [weak self] r in
+            self?.reading[id] = nil
+            if let t = r.log.compactMap({ $0.firstMatch(of: /^title ([0-9A-F]{16})$/).map { String($0.1) } }).last { Switch2Source.nupTitles[key] = t; self?.rescan(id) }
+        }
+        let code = "import sys; sys.path.insert(0, sys.argv[1]); import pack_nup; print('title %016X' % pack_nup.scan(pack_nup.Nup(sys.argv[2]))[0])"
+        r.start(python, ["-c", code, (repo as NSString).appendingPathComponent("scripts"), nup.path])
     }
     /// The iPhone packs go to: the one chosen in the sidebar while it is connected, else the first connected
     var connected: Device? { devices.first { $0.connected && $0.id == targetID } ?? devices.first { $0.connected } }
@@ -156,7 +170,8 @@ import Combine
         for u in urls {
             var dir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: u.path, isDirectory: &dir) else { continue }
-            let f = dir.boolValue && u.pathExtension != "nxpack" ? u : u.deletingLastPathComponent()
+            // a folder or file inside a Switch 2 dump (its base/, updates/ or dlc/) adds the dump
+            let f = Switch2Source.dumpFolder(containing: u) ?? (dir.boolValue && u.pathExtension != "nxpack" ? u : u.deletingLastPathComponent())
             if !folders.contains(f) { folders.append(f) }
         }
         for f in folders where !games.contains(where: { $0.folder == f }) {
@@ -174,9 +189,9 @@ import Combine
     }
     /// Reads the games' folders again off the main thread (a drive busy with a build can take seconds to list a folder), then `then` for each
     func rescan(_ id: MacGame.ID? = nil, then: ((MacGame) -> Void)? = nil) {
-        let folders = games.filter { id == nil || $0.id == id }.map(\.folder), packs = packsURL
+        let folders = games.filter { id == nil || $0.id == id }.map(\.folder), packs = packsURL, repo = repo
         Task {
-            let scanned = await Task.detached { let index = PackEntry.index(packs); return folders.map { MacGame.scan($0, packs: index) } }.value
+            let scanned = await Task.detached { let index = PackEntry.index(packs); return folders.map { MacGame.scan($0, packs: index, repo: repo) } }.value
             for g in scanned {
                 guard let i = games.firstIndex(where: { $0.folder == g.folder }) else { continue }
                 games[i] = g; checkAge(g); then?(g)
@@ -186,7 +201,7 @@ import Combine
     /// The same at once, on the caller's thread: for a build that goes on with what its first step left
     func rescanNow(_ id: MacGame.ID) {
         let index = PackEntry.index(packsURL)
-        for i in games.indices where games[i].id == id { games[i] = MacGame.scan(games[i].folder, packs: index); checkAge(games[i]) }
+        for i in games.indices where games[i].id == id { games[i] = MacGame.scan(games[i].folder, packs: index, repo: repo); checkAge(games[i]) }
     }
 
     /// Each pack's age against the checkout (PackAge), worked out off the main thread
@@ -201,6 +216,10 @@ import Combine
     // MARK: builds
 
     var canBuild: Bool { !repo.isEmpty && !python.isEmpty && !keys.isEmpty }
+    /// Whether `g` can be made now: a Switch 2 game needs no prod.keys
+    func canBuild(_ g: MacGame) -> Bool { !repo.isEmpty && !python.isEmpty && (g.switch2 != nil || !keys.isEmpty) }
+    /// The NSP script's -k, for a game whose files are encrypted
+    private func keyArgs(_ g: MacGame) -> [String] { g.switch2 == nil ? ["-k", keys] : [] }
 
     // MARK: queue
 
@@ -211,7 +230,7 @@ import Combine
 
     /// Make `g`'s pack (or its Mac version) now, or after the builds before it
     func enqueue(_ g: MacGame, kind: PackBuild.Kind = .pack) {
-        guard canBuild, builds[g.id]?.state != .running, !queue.contains(g.id) else { return }
+        guard canBuild(g), builds[g.id]?.state != .running, !queue.contains(g.id) else { return }
         queue.append(g.id)
         if kind == .mac { queuedMac.insert(g.id) } else { queuedMac.remove(g.id) }
         startNext()
@@ -226,10 +245,10 @@ import Combine
     }
 
     func build(_ g: MacGame) {
-        guard builds[g.id]?.state != .running, canBuild else { return }
+        guard builds[g.id]?.state != .running, canBuild(g) else { return }
         guard building == nil else { if !queue.contains(g.id) { queue.append(g.id); queuedMac.remove(g.id) }; return }   // another is being made: this one waits its turn
         let script = (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")
-        var args = [script, g.folder.path, "--prepare-xcode", "--progress", "json", "-k", keys]
+        var args = [script, g.folder.path, "--prepare-xcode", "--progress", "json"] + keyArgs(g)
         if !team.isEmpty { args += ["--team-id", team] }
         if let lang = Self.gameLanguage { args += ["--prefer-language", lang] }
         // NX_EXTRACT_CHUNK_SUMS: the extraction keeps the game files' checksums as it writes them (nx_extract), so the pack needs not read them again
@@ -290,10 +309,10 @@ import Combine
     /// The Mac version made (again) from the game's build files: build_ipa_from_nsp.py --platform mac-app (the steps the pack's prepare made are reused; the Mac host and
     /// the Mac shaders are its own), into <title ID>_build/mac/<name>.app, apart from the game's files
     func buildMac(_ g: MacGame) {
-        guard builds[g.id]?.state != .running, canBuild else { return }
+        guard builds[g.id]?.state != .running, canBuild(g) else { return }
         guard building == nil else { if !queue.contains(g.id) { queue.append(g.id); queuedMac.insert(g.id) }; return }
         let script = (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")
-        var args = [script, g.folder.path, "--platform", "mac-app", "-o", MacVersion.output(g).path, "--progress", "json", "-k", keys]
+        var args = [script, g.folder.path, "--platform", "mac-app", "-o", MacVersion.output(g).path, "--progress", "json"] + keyArgs(g)
         if let lang = Self.gameLanguage { args += ["--prefer-language", lang] }
         watch(PackBuild(kind: .mac, prepare: (python, args, ["NX_EXTRACT_CHUNK_SUMS": "1"])) { nil }, g)
     }

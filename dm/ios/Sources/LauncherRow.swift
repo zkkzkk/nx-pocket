@@ -149,7 +149,7 @@ private let zh: [String: String] = [
     "Make your own Switch games into packs for NX Pocket": "把你自己的 Switch 游戏制作成 NX Pocket 游戏包", "Add a game": "添加游戏", "Its folder, or its NSP / XCI / NSZ / XCZ files": "游戏文件夹，或 NSP / XCI / NSZ / XCZ 文件",
     "With your own prod.keys": "使用你自己的 prod.keys", "To NX Pocket, over the cable": "通过数据线送进 NX Pocket", "Drop game folders here, or click to choose": "把游戏文件夹拖到这里，或点击选择",
     "Drop to add the game": "松开以添加游戏", "Copy": "拷贝", "Play on this Mac": "在这台 Mac 上玩",
-    "Base game": "本体", "Update": "更新",
+    "Base game": "本体", "Update": "更新", "Folder": "文件夹",
     "DLC ×%d": "DLC ×%d", "No game files in this folder": "此文件夹中没有游戏文件", "Game Pack": "游戏包",
     "No game pack yet": "还没有游戏包", "Making one takes 20 to 60 minutes, depending on the game. You can stop and carry on later: finished stages are kept.": "制作一次约需 20～60 分钟，取决于游戏大小。可以随时停止，下次继续时会保留已完成的阶段。", "Finish setting up first: the nxnative checkout, a Python and your prod.keys.": "请先完成环境设置：nxnative 仓库、Python 和你的 prod.keys。",
     "Game pack ready": "游戏包已就绪", "Export…": "导出…", "signed by %@": "由 %@ 签名",

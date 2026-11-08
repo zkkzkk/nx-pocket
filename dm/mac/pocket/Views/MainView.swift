@@ -52,7 +52,7 @@ struct MainView: View {
                     Button(role: .destructive) { model.builds[g.id]?.stop() } label: { Label(tr("Stop"), systemImage: "stop.fill") }
                 } else {
                     Button { model.enqueue(g) } label: { Label(g.pack == nil ? tr("Make Game Pack") : tr("Make Again"), systemImage: "shippingbox") }
-                        .disabled(!model.canBuild || g.files.isEmpty)
+                        .disabled(!model.canBuild(g) || g.files.isEmpty)
                 }
                 Button { if let d = model.connected { model.send(g, to: d) } } label: { Label(tr("Send to iPhone"), systemImage: "iphone.and.arrow.forward") }
                     .disabled(g.pack == nil || model.connected == nil)
@@ -74,7 +74,7 @@ private struct Sidebar: View {
                 ForEach(model.games) { g in
                     GameRow(game: g).tag(g.id)
                         .contextMenu {
-                            Button(tr("Play on Mac")) { model.playOnMac(g) }.disabled(g.macApp == nil && (!model.canBuild || g.files.isEmpty))
+                            Button(tr("Play on Mac")) { model.playOnMac(g) }.disabled(g.macApp == nil && (!model.canBuild(g) || g.files.isEmpty))
                             Button(tr("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([g.pack ?? g.folder]) }
                             Divider()
                             Button(tr("Remove from List"), role: .destructive) { model.remove(g) }
