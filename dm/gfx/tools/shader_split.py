@@ -775,13 +775,19 @@ def cra_jobs(files, parts=64):
         arcs.add(p)
     return jobs, arcs
 
+IN_CRA = False   # scan_blob is reading a CRA archive's files: their NARCs are Camelot's (cra.narc_members, cra.undo)
+
 def cra_shaders(path, rel, ents, out):
     """A range of a CRA archive's files, unscrambled and scanned like loose files; sound and movies (their magics: FSTM, EBML) are left out by their first block, as unscrambling is the slow part"""
+    global IN_CRA
     import cra
-    with open(path, 'rb') as f:
-        for e in ents:
-            if cra.head(f, e)[:4] in (b'FSTM', b'\x1aE\xdf\xa3'): continue
-            scan_blob(cra.undo(cra.read(f, e)), f'/{rel}/{e[1]}', out)
+    IN_CRA = True
+    try:
+        with open(path, 'rb') as f:
+            for e in ents:
+                if cra.head(f, e)[:4] in (b'FSTM', b'\x1aE\xdf\xa3'): continue
+                scan_blob(cra.undo(cra.read(f, e)), f'/{rel}/{e[1]}', out)
+    finally: IN_CRA = False
 
 PDAT, PDAT_PMAP = b'PDAT', b'PMAP'
 PDAT_ZSTD, PDAT_CTL, PDAT_SPAN = b'\x28\xb5\x2f\xfd', CTL_MAGIC + b'\xc9\0\0\0', 1 << 20   # a PMAP frame never takes up 1 MB (the largest of Kirby Air Riders' 27,299: 186 KB inflated); pdat_shaders stops if one does
@@ -2814,7 +2820,8 @@ def scan_blob(d, label, out, depth=0, left=None):
         left[0] += paid
         for nm, m in sarc_members(d, label): scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
         return
-    if d[:4] == b'NARC' and d[4:6] == b'\xfe\xff':   # a Nintendo NARC (Mario Tennis Aces)
+    if d[:4] == b'NARC' and d[4:6] == b'\xfe\xff' and not IN_CRA:   # a Nintendo NARC (Mario Tennis Aces). Camelot's in a CRA archive (Mario Tennis Fever) have the same header, but their member
+        # kinds differ (0x70 is stored there, zlib here), so those take cra.py's reader below
         members = list(narc_members(d, label))
         left[0] += NEST * sum(len(m) for _, m in members)   # as with SUMO's, the budget is of what the members decode to (a 2 MB texture of one colour packs to a few KB)
         for nm, m in members: scan_blob(m, f'{label}/{nm}', out, depth + 1, left)

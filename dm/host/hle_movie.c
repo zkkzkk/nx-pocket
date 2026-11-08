@@ -581,12 +581,6 @@ HLE_FORCE("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11De
 // SDK 4's constructor has no priority argument (Dark Souls Remastered, NintendoSDK_movie 4.5.0). Without this take-over the SDK built its own decoder and the host's Configure read it as a host one (a call through a null pointer)
 HLE_FORCE("_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeE", "movie decoder (SDK 4, no priority): host implementation", void, h_movie_Decoder4,
           void **self, int type, int fmt, int mode) { h_movie_Decoder(self, type, fmt, mode, 0); }
-// The base-object constructors (C2) build the same object (movie::Decoder has no virtual base). Mario Tennis Aces (3.1.1, SDK 4.5.0) imports only the SDK 4 C2 (main+0x207c94's caller):
-// untaken, the SDK built its own decoder, the host's Configure read the SDK's implementation as a host decoder and called a MediaData accessor it had never looked up (pc 0)
-HLE_FORCE("_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", "movie decoder (base-object constructor): host implementation", void, h_movie_Decoder2,
-          void **self, int type, int fmt, int mode, int prio) { h_movie_Decoder(self, type, fmt, mode, prio); }
-HLE_FORCE("_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeE", "movie decoder (SDK 4, base-object constructor, no priority): host implementation", void, h_movie_Decoder24,
-          void **self, int type, int fmt, int mode) { h_movie_Decoder(self, type, fmt, mode, 0); }
 // SDK 3's constructor has neither a mode nor a priority (NintendoSDK_movie 3.5.1, Hyrule Warriors: Definitive Edition: Decoder(type, format) builds DecoderImpl(type, format), subsdk1+0x2de630):
 // its decoders are CPU-mode ones (mode 1), and its GetOutputBufferSize puts 0x20 in the second output (subsdk1+0x2dcde8: mov w8,#0x20; str w8,[x2]), where SDK 4 and later put the mode.
 // Its output formats are numbered one lower than later SDKs': ConvertDecoderOutputFormat (subsdk1+0x2dd16c) converts format 2 to ARGB and copies format 3 out as NV12 with stride = width
