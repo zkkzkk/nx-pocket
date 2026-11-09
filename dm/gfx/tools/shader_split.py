@@ -2787,7 +2787,7 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
             # that expands 9 times, which then added up to 18 times the file). For the same reason an archive's members do not pay again for the bytes the archive itself paid for:
             # opening it gives back what it took up, so the budget counts what its members add (overlap, and what its Yaz0 or zstd members expand to), not each level of nesting
             # once more (Super Mario Maker 2's Pack/Layout*.pack: Yaz0 layouts expanding 9 to 13 times, each holding one .arc archive whose members are as large again; 19 to 25 times
-            # the file when every level was counted)
+            # the file when every level was counted). Each member still keeps one unit of what it paid, so their count is bounded too
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
     if d[:8] == SUMO_MUX:
@@ -2808,7 +2808,7 @@ def scan_blob(d, label, out, depth=0, left=None):
     paid = 0   # what this member took from the first budget, given back when it is an archive whose members are opened
     if left is None: left = [NEST * len(d)] * 2   # the file itself: what its archives' members may add up to, and what their Yaz0 and zstd members may expand to
     else:
-        left[0] -= stored; paid = stored
+        left[0] -= stored + 1; paid = stored   # one unit more than the refund: an archive of empty archives, every one pointing at the next, refunded in full, cost nothing at any depth
         if left[0] < 0: red(f'{label}: the archive members add up to more than {NEST} times the file (members that overlap)')
     if d[:4] == ZSTD_MAGIC:   # a zstd member (Super Mario Maker 2's SARC members): decompressed before it is read
         did = zs_dict_id(d)
@@ -2827,7 +2827,12 @@ def scan_blob(d, label, out, depth=0, left=None):
         for nm, m in members: scan_blob(m, f'{label}/{nm}', out, depth + 1, left)
     elif d[:4] == b'NARC':   # Camelot's containers (cra.py): each member packed by its first byte, so its size says nothing about the budget above
         import cra
-        for i, m in enumerate(cra.narc_members(d, label)): scan_blob(cra.undo(m), f'{label}/{i}', out, depth + 1)
+        try: members = cra.narc_members(d, label)
+        except (cra.Error, struct.error) as e: red(f'{e}' if isinstance(e, cra.Error) else f'{label}: the NARC ends inside its tables')
+        for i, m in enumerate(members):
+            try: m = cra.undo(m)   # the member's kind byte names its packing; a broken one is the file's problem, named here
+            except (cra.Error, struct.error, IndexError, cra.lz4.block.LZ4BlockError, cra.zstd_mod().ZstdError) as e: red(f'{label}/{i}: the member does not unpack ({type(e).__name__}: {e})')
+            scan_blob(m, f'{label}/{i}', out, depth + 1)
         return
     if d[:4] == b'BAHS': out.extend(bahs_shaders(d, label)); return
     if d[:4] == b'NDSR': out.extend(ndsr_shaders(d, label)); return
