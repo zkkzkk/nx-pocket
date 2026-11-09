@@ -37,6 +37,7 @@ final class PocketSceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = w
         if ProcessInfo.processInfo.environment["DM_POCKET_SYSLOG"] == "1" { SysLogMirror.start() }
         if let u = options.urlContexts.first?.url { opened(u) }   // started by opening a pack
+        DispatchQueue.main.async { [weak self] in self?.noticeLastStop() }
         // Development switches (a Mac run: open --env): DM_POCKET_PACK=<folder> links that pack as Use where it is would, without the file picker (the app must be able to read
         // it: a path inside the app, or one picked before); DM_POCKET_PLAY=<title ID> presses Play on that game once the home screen is up
         let env = ProcessInfo.processInfo.environment
@@ -107,6 +108,38 @@ final class PocketSceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController?.present(a, animated: true)
     }
 
+    // A game the host stopped on its own, from the last lines of its log: under DM_GUEST_FILE_MIN_FREE free on the disk (hle_svc.c guest_file_thread) or over the memory
+    // watchdog's limit (hle_nvn.c). NX Pocket ends with the game, which only went black, so the next start of NX Pocket says why, once per log
+    private static let stopSeenKey = "pocket.stopNoticeSeen"
+    private func noticeLastStop() {
+        guard let g = library.games.filter({ $0.lastPlayed != nil }).max(by: { $0.lastPlayed! < $1.lastPlayed! }), let window else { return }
+        let log = GameLibrary.dataFolder(g.titleID).appendingPathComponent("log.txt")
+        guard let made = (try? log.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970,
+              made > UserDefaults.standard.double(forKey: Self.stopSeenKey), let h = try? FileHandle(forReadingFrom: log) else { return }
+        defer { try? h.close() }
+        let end = (try? h.seekToEnd()) ?? 0
+        try? h.seek(toOffset: end > 4096 ? end - 4096 : 0)
+        let tail = String(decoding: (try? h.readToEnd()) ?? Data(), as: UTF8.self)
+        UserDefaults.standard.set(made, forKey: Self.stopSeenKey)
+        let why: String
+        if let m = tail.firstMatch(of: /guest file: ([0-9.]+) GB free on its disk, under ([0-9.]+): stopping the game/) {
+            why = String(format: tr("The iPhone's storage ran low (%@ GB free), so the game was stopped before it filled up. The game needs at least %@ GB free while it runs. Free up some space, then start it again."), String(m.1), String(m.2))
+        } else if tail.contains("memory watchdog:"), tail.contains(", exiting") {
+            why = tr("The game used more memory than the iPhone allows, so it was stopped.")
+        } else { return }
+        fputs("pocket: \(g.name) was stopped by its host the last time\n", stderr)
+        let a = UIAlertController(title: String(format: tr("%@ was stopped"), g.name), message: why, preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: tr("OK"), style: .default))
+        window.rootViewController?.present(a, animated: true)
+    }
+
+    // The free space a game's memory files would take from (DM_GUEST_FILE_DIR is the temporary folder, main.m), as hle_svc.c counts it: none the system could purge
+    private static func freeSpace() -> Int64? {
+        (try? URL(fileURLWithPath: NSTemporaryDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity.map(Int64.init)
+    }
+    private static let lowSpace: Int64 = 8 << 30   // the host stops a game in files under 5 GB free; a few GB above it for the files to grow
+    private var lowSpaceAccepted = false
+
     private var starting = false
     private func play() {
         let g = library.selected
@@ -120,6 +153,17 @@ final class PocketSceneDelegate: UIResponder, UIWindowSceneDelegate {
             a.addAction(UIAlertAction(title: tr("OK"), style: .default)); window.rootViewController?.present(a, animated: true)
             return
         }
+        // Little free space: a game whose memory is in files is stopped when the disk falls under 5 GB free, so say so before it starts
+        if !lowSpaceAccepted, let free = Self.freeSpace(), free < Self.lowSpace {
+            let a = UIAlertController(title: tr("Storage Almost Full"),
+                                      message: String(format: tr("Only %@ GB is free on this iPhone. A large game keeps part of its memory in storage, and it is stopped when less than 5 GB is free."), String(format: "%.1f", Double(free) / 1073741824)),
+                                      preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: tr("Cancel"), style: .cancel))
+            a.addAction(UIAlertAction(title: tr("Start Anyway"), style: .default) { [weak self] _ in self?.lowSpaceAccepted = true; self?.play() })
+            window.rootViewController?.present(a, animated: true)
+            return
+        }
+        lowSpaceAccepted = false
         starting = true
         if pack.linked { _ = pack.url.startAccessingSecurityScopedResource() }   // a pack used in place: readable from here on (unpacking, then the game)
         // A format 2 pack's archives are unpacked once (GameLibrary.unpack), and a pack not signed by NX Pocket's team is signed here (PackSigner.swift): seconds to a
