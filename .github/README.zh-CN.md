@@ -30,7 +30,7 @@
 - **游戏包**：每个游戏就是一个 `.nxpack` 文件，从"文件"、隔空投送或外接盘导入。NX Pocket 原地读取游戏数据，并逐块核对校验值。
 - **折叠屏掌机模式**：在折叠屏 iPhone 上，画面在上半屏、按键在下半屏，避开折痕；半折立起来就像一台掌机；倒着拿时画面会自己转正。
 - **本地联机**：通过 Wi-Fi 实现 Switch 本地无线联机，iPhone 之间、iPhone 和 Mac 之间都能玩。任天堂明星大乱斗特别版、马力欧网球 Aces 已支持建房、加入和对战。
-- **NX Pocket for Mac**：拖入游戏文件就能做出游戏包，有实时进度和排队制作，一键发送到 iPhone，还能直接把 NX Pocket 装到手机上。点**在 Mac 上玩**可以直接在 Mac 上玩同一个游戏，支持键盘和手柄，存档和 iPhone 共用同一个 iCloud 文件夹。
+- **NX Pocket for Mac**：拖入游戏文件就能做出游戏包，有实时进度和排队制作，一键发送到 iPhone，还能直接把 NX Pocket 装到手机上。点**在 Mac 上玩**可以直接在 Mac 上玩同一个游戏，支持键盘和手柄，存档和 iPhone 共用同一个 iCloud 文件夹。Switch 2 游戏可以用导出的游戏文件夹或 NUP 文件添加。
 
 ## NX Pocket 是什么
 
@@ -53,6 +53,7 @@ NX Pocket 基于 [nxnative](https://github.com/seedds/nxnative)：游戏自己�
 - A17 Pro / M1 或更新芯片的 iPhone 或 iPad，iOS / iPadOS 26 或更新。
 - 一个 Apple ID。推荐付费开发者账号：签名一年有效，并且能开大型游戏需要的"大内存"权限。
 - 你自己从主机导出的游戏文件（NSP、XCI、NSZ 或 XCZ）和 `prod.keys`。
+- Switch 2 游戏：你自己导出的游戏文件夹（`base/`、`updates/`、`dlc/`）或 NUP 文件，不需要 `prod.keys`。
 
 ## 安装
 
