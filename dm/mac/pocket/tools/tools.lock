@@ -1,5 +1,6 @@
-# NX Pocket for Mac's tool kit (make_tools.py): build.sh builds these into the app (NXPocketTools*)
+# NX Pocket for Mac's tool kit (make_tools.py): build.sh builds these into the app (NXPocketTools*); url is the parts' base (url.00, url.01, ...)
 version	1
 url	https://github.com/zkkzkk/nx-pocket/releases/download/tools-1/nx-pocket-tools-1.tar.gz
+parts	5
 size	43984087
 sha256	4e439509e58d62448b7a7e33721b70a874e79770da6d7c3bbc4322d2e31945a0

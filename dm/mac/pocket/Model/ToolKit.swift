@@ -9,6 +9,7 @@ enum ToolKit {
     static var url: String { info("URL") }
     static var sha256: String { info("SHA256") }
     static var size: Int { Int(info("Size")) ?? 0 }
+    static var parts: Int { Int(info("Parts")) ?? 0 }   // 0: one file at url; n: url.00 to url.<n-1>, joined
     static var sizeText: String { size > 0 ? ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) : "" }
 
     /// ~/Library/Application Support/NX Pocket: the kit (tools/), and the code (Setup.codeFolder)
@@ -28,7 +29,9 @@ enum ToolKit {
     static func installCommand() -> String? {
         guard !url.isEmpty, !sha256.isEmpty else { return nil }
         let d = dir.path.replacingOccurrences(of: "'", with: "'\\''")
-        return "rm -rf '\(d).new' && mkdir -p '\(d).new' && cd '\(d).new' && curl -fL --retry 3 --progress-bar -o kit.tar.gz '\(url)' && echo '\(sha256)  kit.tar.gz' | shasum -a 256 -c - "
+        let get = parts == 0 ? "curl -fL --retry 3 --progress-bar -o kit.tar.gz '\(url)'"
+                             : (0..<parts).map { String(format: "curl -fL --retry 3 --progress-bar '%@.%02d' >> kit.tar.gz", url, $0) }.joined(separator: " && ")
+        return "rm -rf '\(d).new' && mkdir -p '\(d).new' && cd '\(d).new' && \(get) && echo '\(sha256)  kit.tar.gz' | shasum -a 256 -c - "
             + "&& tar -xzf kit.tar.gz && rm kit.tar.gz && echo '\(version)' > VERSION && cd .. && rm -rf '\(d)' && mv '\(d).new' '\(d)'"
     }
 }
