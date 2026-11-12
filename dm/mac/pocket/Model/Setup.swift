@@ -69,12 +69,13 @@ enum Setup {
                                                                 : missingMods.isEmpty ? "\(python) (\(ver))" : String(format: tr("Missing modules: %@"), missingMods.joined(separator: ", ")),
                                state: pyOK && missingMods.isEmpty ? (zbic ? .ok : .optional) : .missing,
                                install: .command(pythonInstall(repo: repo, python: pyOK ? python : "")), alternate: .choosePython))
-        let repoOK = !repo.isEmpty && FileManager.default.fileExists(atPath: (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py"))
+        let repoOK = isCode(repo), upstream = !repoOK && !repo.isEmpty && FileManager.default.fileExists(atPath: (repo as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py"))
         if pyOK && missingMods.isEmpty && !zbic { items[items.count - 1] = SetupItem(id: "python", title: "Python 3.12+", detail: "\(python) · " + tr("zbic is missing (only some games need it)"), state: .optional, install: .command("'\(python)' -m pip install zbic")) }
         let script = UserDefaults.standard.string(forKey: "envScript") ?? ""
         items.append(SetupItem(id: "env", title: tr("Environment script"), detail: script.isEmpty ? tr("Optional: a shell script that sets up tools kept elsewhere") : script,
                                state: script.isEmpty || FileManager.default.isReadableFile(atPath: script) ? (script.isEmpty ? .optional : .ok) : .missing, install: .chooseEnv))
-        items.append(SetupItem(id: "repo", title: tr("nxnative checkout"), detail: repo.isEmpty ? tr("Download gets it from GitHub (about 600 MB), or choose a copy you have") : repo, state: repoOK ? .ok : .missing,
+        items.append(SetupItem(id: "repo", title: tr("nxnative checkout"), detail: repo.isEmpty ? tr("Download gets it from GitHub (about 600 MB), or choose a copy you have")
+                                    : upstream ? String(format: tr("%@ is nxnative without NX Pocket's pack scripts. Download NX Pocket's code."), repo) : repo, state: repoOK ? .ok : .missing,
                                install: repoOK ? .chooseRepo : .downloadRepo, alternate: repoOK ? nil : .chooseRepo))
         let keysOK = !keys.isEmpty && FileManager.default.isReadableFile(atPath: keys)
         items.append(SetupItem(id: "keys", title: "prod.keys", detail: keys.isEmpty ? tr("Your own console's keys; only the path is kept") : keys, state: keysOK ? .ok : .missing, install: .chooseKeys))
@@ -100,6 +101,12 @@ enum Setup {
         if FileManager.default.isExecutableFile(atPath: v) { return v }
         for p in ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"] where FileManager.default.isExecutableFile(atPath: p) { return p }
         return ""
+    }
+
+    /// Whether `path` holds NX Pocket's code: the NSP script and the pack script. nxnative itself (the README's clone of seedds/nxnative before NX Pocket's own) has
+    /// only the first, and makes no game pack
+    static func isCode(_ path: String) -> Bool {
+        !path.isEmpty && ["scripts/build_ipa_from_nsp.py", "dm/ios/tools/build_pack.py"].allSatisfy { FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent($0)) }
     }
 
     /// The Python environment Install makes: the checkout's .venv (README), or one in Application Support while no checkout is chosen
@@ -130,7 +137,7 @@ enum Setup {
         }
         let base = !python.isEmpty ? "'\(python)'" : ["3.14", "3.13", "3.12"].map { "/opt/homebrew/bin/python\($0)" }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/python3.13"
         let brew = python.isEmpty && !FileManager.default.isExecutableFile(atPath: base) ? "brew install python@3.13 && " : ""
-        return "\(brew)\(base) -m venv '\(v)' && '\(v)/bin/pip' install \(pipPackages)"
+        return "\(brew)\(base) -m venv --clear '\(v)' && '\(v)/bin/pip' install \(pipPackages)"   // --clear: venv keeps an existing bin/python3, so an environment made from an Intel Python stayed one
     }
 
     /// The clone of the code into `folder`: blobs on demand, so it is quicker than a full clone and keeps every commit (NX Pocket's build number counts them)

@@ -158,7 +158,7 @@ import Combine
         var u = Bundle.main.bundleURL
         for _ in 0..<8 {
             u = u.deletingLastPathComponent()
-            if FileManager.default.fileExists(atPath: u.appendingPathComponent("scripts/build_ipa_from_nsp.py").path) { return u.path }
+            if Setup.isCode(u.path) { return u.path }
         }
         return nil
     }
@@ -495,7 +495,7 @@ import Combine
         var dest = repo, clone = false
         if setup.first(where: { $0.id == "repo" })?.state != .ok {
             guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
-            dest = Self.codeFolder(in: u); clone = !FileManager.default.fileExists(atPath: (dest as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py"))
+            dest = Self.codeFolder(in: u); clone = !Setup.isCode(dest)
         }
         let (items, py) = (setup, python)
         repo = dest
@@ -507,7 +507,7 @@ import Combine
 
     /// Where Download puts the code in the folder picked: the folder itself when it is already a copy, else nx-pocket in it
     static func codeFolder(in u: URL) -> String {
-        FileManager.default.fileExists(atPath: u.appendingPathComponent("scripts/build_ipa_from_nsp.py").path) ? u.path : u.appendingPathComponent("nx-pocket").path
+        Setup.isCode(u.path) ? u.path : u.appendingPathComponent("nx-pocket").path
     }
 
     private func runSetup(_ script: String) {
@@ -544,7 +544,7 @@ import Combine
             guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
             let dest = Self.codeFolder(in: u)
             repo = dest
-            if FileManager.default.fileExists(atPath: (dest as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")) { checkSetup() } else { runSetup(Setup.script([Setup.cloneCommand(into: dest)])) }
+            if Setup.isCode(dest) { checkSetup() } else { runSetup(Setup.script([Setup.cloneCommand(into: dest)])) }
         case .chooseRepo:
             if let u = choose(folder: true, prompt: tr("Choose")) { repo = u.path; if python.isEmpty { python = Setup.guessPython(repo: repo) }; checkSetup() }
         case .chooseKeys:

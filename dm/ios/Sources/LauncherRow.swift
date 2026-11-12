@@ -134,7 +134,7 @@ private let zh: [String: String] = [
     "nxnative checkout": "nxnative 仓库", "Your own console's keys; only the path is kept": "你自己主机的密钥；只记录路径，不复制文件", "Welcome to NX Pocket": "欢迎使用 NX Pocket",
     "Before making game packs, check that this Mac has everything they need.": "制作游戏包之前，先确认这台 Mac 已具备所需环境。", "Check Again": "重新检查", "Later": "稍后",
     "Done": "完成", "Open": "打开", "Change…": "更改…",
-    "Choose…": "选择…", "Installing…": "正在安装…", "Install All": "全部安装", "Download Here": "下载到这里",
+    "Choose…": "选择…", "Installing…": "正在安装…", "Install All": "全部安装", "%@ is nxnative without NX Pocket's pack scripts. Download NX Pocket's code.": "%@ 是 nxnative，没有 NX Pocket 的打包脚本。请点“下载”获取 NX Pocket 的代码。", "Download Here": "下载到这里",
     "Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.": "代码放在哪里（约 600 MB），会在这里新建一个 nx-pocket 文件夹。",
     "Download gets it from GitHub (about 600 MB), or choose a copy you have": "点“下载”从 GitHub 获取（约 600 MB），已经有的话点“选择…”",
     "Installing in Terminal. Type your Mac's password there when it asks (nothing shows as you type). This list updates when you come back.": "正在“终端”里安装。提示输入密码时，输入这台 Mac 的开机密码（输入时不会显示），然后按回车。回到这里后列表会自动更新。",
