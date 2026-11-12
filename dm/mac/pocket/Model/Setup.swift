@@ -30,7 +30,9 @@ enum Setup {
     static let pipPackages = "lz4 'capstone>=5,<6' fonttools nsz zbic \"backports.zstd; python_version < '3.14'\""
     /// The code the packs are made with (docs/nx-pocket/README.md, Get the code); codeURL in the defaults names another
     static var codeURL: String { UserDefaults.standard.string(forKey: "codeURL").flatMap { $0.isEmpty ? nil : $0 } ?? "https://github.com/zkkzkk/nx-pocket.git" }
-    static let homebrewInstall = "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\" && eval \"$(/opt/homebrew/bin/brew shellenv)\""   // the steps after it in the same script find brew
+    /// Homebrew's installer, then brew on the PATH of the steps after it in the same script. When it installs the Command Line Tools it also selects them
+    /// (xcode-select --switch), which leaves xcodebuild without Xcode: the folder selected before is selected again (sudo is still open from the installer)
+    static let homebrewInstall = "dev=$(xcode-select -p 2>/dev/null); /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\" && eval \"$(/opt/homebrew/bin/brew shellenv)\" && { [ -z \"$dev\" ] || [ \"$(xcode-select -p)\" = \"$dev\" ] || sudo xcode-select -s \"$dev\"; }"
     /// .NET 10 into ~/.dotnet with Microsoft's script: no password, where the tools look for it (ToolEnvironment, build_ipa_from_nsp.py TOOL_PATHS).
     /// Homebrew's dotnet-sdk cask runs a package installer that asks for the password, which a command run here cannot answer
     static let dotnetInstall = "curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir \"$HOME/.dotnet\""
