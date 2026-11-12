@@ -25,7 +25,10 @@ build() {   # <name> <csproj> <output executable>
         [ -z "$weak" ] || { echo "$weak" >&2; echo "[RED] $1 ($rid) imports functions its minimum macOS does not have, and would crash at address 0 there: build with Microsoft's .NET SDK (brew install --cask dotnet-sdk), not a source-built one" >&2; exit 1; }
     done
     lipo -create "$WORK/$1-osx-arm64/$1" "$WORK/$1-osx-x64/$1" -output "$3"
-    for a in arm64 x86_64; do sha=$(arch -"$a" "$3" --source-sha); echo "$1 ($a): source $sha"; done
+    for a in arm64 x86_64; do   # an Apple silicon Mac without Rosetta cannot start the x86_64 slice: it is built and joined, not run here
+        if ! arch -"$a" /usr/bin/true 2> /dev/null; then echo "$1 ($a): not run (this Mac cannot run $a code)"; continue; fi
+        sha=$(arch -"$a" "$3" --source-sha); echo "$1 ($a): source $sha"
+    done
     echo "$1: sha256 $(shasum -a 256 "$3" | cut -c1-64), $(wc -c < "$3" | tr -d ' ') bytes"
 }
 
