@@ -29,7 +29,7 @@ NX Pocket 是一个在 iPhone 上装所有 Switch 游戏的 App，基于 [nxnati
 
 1. **NX Pocket for Mac**：从 Releases 下载 Mac 版压缩包（zip），把 App 拖进"应用程序"。它没有经过公证，第一次打开后，到"系统设置 → 隐私与安全性"里点"仍要打开"。也可以自己编译：`dm/mac/pocket/build.sh <输出目录>`。
 2. **安装 Xcode**：从 App Store 安装 Xcode 27.2，并打开一次。
-3. **首次引导**：列出制作游戏包需要的东西，点 **全部安装** 装好其余部分：Homebrew 工具、.NET、Python 模块，以及本仓库的代码（游戏包用它的脚本制作；约 600 MB，下载到你选的文件夹）。需要开机密码的步骤（Homebrew、Xcode 首次启动）会在"终端"里运行，在那里输入密码后回到 NX Pocket 即可。最后选择你的 `prod.keys`，只记录路径，不复制密钥。已经有一份代码的话，直接选它的文件夹。
+3. **首次引导**：列出制作游戏包需要的东西，点 **全部安装**，其余部分会下载到 `~/Library/Application Support/NX Pocket`：NX Pocket 的制作工具（带好模块的 Python、zstd、glslang、xcodegen，44 MB）和本仓库的代码（约 750 MB）。不用再装 Homebrew、Python 或 .NET。只有 Xcode 还没完成首次启动时，才会在"终端"里要求输入开机密码。最后选择你的 `prod.keys`（放在 `~/.switch/prod.keys` 会被自动找到），只记录路径，不复制密钥。想用自己的 Python、工具或代码目录，可以在 设置 › 高级 里改。
 4. **添加游戏**：把游戏文件所在的文件夹拖进去。App 会配对本体、更新和 DLC，并显示 nxnative 对它的支持情况（已测试 / 还在调 / 没有配置）。
 5. **制作游戏包**：一个游戏第一次制作要 10 到 60 分钟，大部分时间在编译着色器；之后再做会复用构建文件。游戏包保存在设置里指定的"游戏包存放位置"。
 6. **安装 NX Pocket**：iPhone 连上 Mac 并打开开发者模式，点"安装 NX Pocket"，App 会用你的团队构建并安装。也可以用 AltStore 等工具侧载 Releases 里的 IPA（Sideloadly 会去掉"大内存"权限）。
