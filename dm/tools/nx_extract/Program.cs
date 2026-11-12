@@ -7,8 +7,6 @@
 //   --allow-damaged writes those files as read instead and only lists them (Super Mario Galaxy's base NSP with 147 MB zeroed: its two prologue WebM movies). A RomFS image marks them in its index, and the host names them in its log.
 // A sparse base program (Minecraft Dungeons II: its Program NCA leaves out data that its update carries) can be read only with its update: without one, exit code 4.
 // Add-on content: nx_extract <prod.keys> --aoc <DLC NSP> <output dir> writes the RomFS of the DLC's data NCA to <output dir> (the packing script puts it at aoc/<index>/, the host mounts it through DM_AOC_DIR).
-// Title ID of a package: nx_extract <prod.keys> --title <NSP, NSZ, XCI or XCZ> prints "title <16 hex digits>", the lowest title ID of the package's meta NCAs (the base game's, before its update's or a DLC's),
-//   read from the meta NCA's header with the keys' header_key. For a package without a ticket and without a [title ID] in its name (the NSP script's title_of); exit code 5 when it has no meta NCA.
 // Control data alone: nx_extract <prod.keys> --control <base package> <update package or -> <output dir> writes control.nacp and icon.jpg (as an extraction does) and nothing else:
 //   the game's name, version and icon before anything is built (NX Pocket for Mac shows them on adding a game). The update's control data first, else the base game's; an NSZ's
 //   control NCA is stored uncompressed. Exit code 6 when neither has control data.
@@ -73,7 +71,6 @@ static class P {
         // always names the one it packs. Without it every Application content meta's NCAs are kept and the lowest Program NCA is the game
         ulong? app = null; int ai = Array.IndexOf(a, "--app");
         if (ai >= 0 && ai + 1 < a.Length) { app = Convert.ToUInt64(a[ai + 1], 16); var rest = new List<string>(a); rest.RemoveRange(ai, 2); a = rest.ToArray(); }
-        if (a.Length == 3 && a[1] == "--title") return Title(ExternalKeyReader.ReadKeyFile(a[0]), a[2]);
         if (a.Length == 5 && a[1] == "--control") return Control(ExternalKeyReader.ReadKeyFile(a[0]), a[2], a[3], a[4]);
         if (a.Length >= 3 && a[1] == "--contents") return Contents(ExternalKeyReader.ReadKeyFile(a[0]), a[2..]);
         if (a.Length >= 3 && a[1] == "--keys") return Keys(ExternalKeyReader.ReadKeyFile(a[0]), a[2..]);
