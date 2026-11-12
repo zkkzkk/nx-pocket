@@ -15,8 +15,6 @@ app_category	public.app-category.games
 op_mode	handheld
 # All controller buttons remain available below the picture in Duo portrait.
 pad_layout	full
-# The game records conditional rendering during boot; replay its predicates on the GPU.
-render_cond	on
 # Render jobs race scene setup and teardown on other guest threads (g3d materials, ui2d draw state, command buffers): run one guest thread at a time.
 core_lock	all
 

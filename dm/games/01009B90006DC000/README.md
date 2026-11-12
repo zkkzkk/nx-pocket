@@ -6,7 +6,7 @@ Update 3.0.3 (v458752) over the base game; Nintendo sead / agl / gsys on SDK 7.3
 
 - `op_mode handheld`: exposes the touchscreen for course editing on the phone.
 - `pad_layout full`: all buttons, D-pad and both sticks remain available. The layout selector also offers the simple and touch layouts.
-- `render_cond on`: the game records conditional rendering during boot; replay its predicates instead of drawing unconditionally.
+- Conditional rendering: the game records it during boot; the host evaluates every game's conditions at replay ([Conditional rendering evaluated at replay](../../../docs/reference/rendering.md#conditional-rendering-evaluated-at-replay); until 2026-11-12 the profile key `render_cond`).
 - The NPDM declares no system resource. The 4 GB guest layout and pool follow the static heap calculation. Boot sets a 3.14 GB heap; the Mac title/editor run used about 1.5–1.9 GiB resident.
 - Modules `main sdk`; RomFS marker `Pack/QuestModel.pack`.
 
