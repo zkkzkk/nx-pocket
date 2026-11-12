@@ -78,6 +78,7 @@ import Combine
     @Published var showLog = false
     @Published var setup: [SetupItem] = []
     @Published var setupRun: ToolRun?
+    @Published var setupInTerminal = false   // an install handed to Terminal (it asks for the password there); the list is checked again when NX Pocket comes back to the front
     private var exporting: ToolRun?
     private var bag: [AnyCancellable] = []
 
@@ -471,23 +472,79 @@ import Combine
     // MARK: setup
 
     func checkSetup() {
-        let (r, k, p) = (repo, keys, python)
-        Task.detached { let items = Setup.check(repo: r, keys: k, python: p); await MainActor.run { self.setup = items } }
+        let (r, k, p0) = (repo, keys, python)
+        Task.detached {
+            let v = Setup.venvPython(repo: r)   // the environment Install made, once the Python chosen before lacks the modules (Homebrew's, which refuses them)
+            let p = !Setup.pythonReady(p0) && v != p0 && Setup.pythonReady(v) ? v : p0
+            let items = Setup.check(repo: r, keys: k, python: p)
+            await MainActor.run { if p != self.python { self.python = p }; self.setup = items }
+        }
     }
     var setupMissing: Bool { setup.contains { $0.state == .missing } }
+    /// Whether Install All has something to do: a missing item a command or a download fixes (Xcode from the App Store and the keys stay the player's)
+    var setupInstallable: Bool {
+        setup.contains { item in
+            guard item.state == .missing || (item.id == "python" && item.state != .ok) else { return false }
+            switch item.install { case .command?, .terminal?, .downloadRepo?: return true; default: return item.id == "python" }
+        }
+    }
+
+    /// Everything a command can install, in one go: the code first downloaded into a folder the player picks (when it is missing), then one script, run here,
+    /// or in Terminal when a step asks for the password (Homebrew's installer, Xcode's first launch)
+    func installAll() {
+        var dest = repo, clone = false
+        if setup.first(where: { $0.id == "repo" })?.state != .ok {
+            guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
+            dest = Self.codeFolder(in: u); clone = !FileManager.default.fileExists(atPath: (dest as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py"))
+        }
+        let (items, py) = (setup, python)
+        repo = dest
+        Task.detached {
+            let (script, terminal) = Setup.installAll(items, repo: dest, cloneRepo: clone, python: py)
+            await MainActor.run { terminal ? self.runInTerminal(script) : self.runSetup(script) }
+        }
+    }
+
+    /// Where Download puts the code in the folder picked: the folder itself when it is already a copy, else nx-pocket in it
+    static func codeFolder(in u: URL) -> String {
+        FileManager.default.fileExists(atPath: u.appendingPathComponent("scripts/build_ipa_from_nsp.py").path) ? u.path : u.appendingPathComponent("nx-pocket").path
+    }
+
+    private func runSetup(_ script: String) {
+        let r = ToolRun(title: tr("Install"))
+        setupRun = r
+        r.onFinish = { [weak self] _ in
+            guard let self else { return }
+            if self.python.isEmpty || !FileManager.default.isExecutableFile(atPath: self.python) { self.python = Setup.guessPython(repo: self.repo) }
+            self.checkSetup()
+        }
+        r.start("/bin/bash", ["-lc", script])
+    }
+
+    /// The script as a .command file, which Terminal opens and runs: there it can ask for the Mac's password
+    private func runInTerminal(_ script: String) {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NX Pocket")
+        let file = dir.appendingPathComponent("Setup.command")
+        let text = "#!/bin/bash\ncd \"$HOME\"\n\(script)\necho; echo '\(tr("Done. Go back to NX Pocket."))'\n"
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        } catch { return }
+        setupInTerminal = true
+        NSWorkspace.shared.open(file)
+    }
 
     func perform(_ a: SetupAction) {
         switch a {
         case .open(let u): if let url = URL(string: u) { NSWorkspace.shared.open(url) }
-        case .command(let c):
-            let r = ToolRun(title: tr("Install"))
-            setupRun = r
-            r.onFinish = { [weak self] _ in
-                guard let self else { return }
-                if self.python.isEmpty || !FileManager.default.isExecutableFile(atPath: self.python) { self.python = Setup.guessPython(repo: self.repo) }
-                self.checkSetup()
-            }
-            r.start("/bin/bash", ["-lc", c])
+        case .command(let c): runSetup(Setup.script([c]))
+        case .terminal(let c): runInTerminal(Setup.script([c]))
+        case .downloadRepo:
+            guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
+            let dest = Self.codeFolder(in: u)
+            repo = dest
+            if FileManager.default.fileExists(atPath: (dest as NSString).appendingPathComponent("scripts/build_ipa_from_nsp.py")) { checkSetup() } else { runSetup(Setup.script([Setup.cloneCommand(into: dest)])) }
         case .chooseRepo:
             if let u = choose(folder: true, prompt: tr("Choose")) { repo = u.path; if python.isEmpty { python = Setup.guessPython(repo: repo) }; checkSetup() }
         case .chooseKeys:
@@ -499,9 +556,9 @@ import Combine
         }
     }
 
-    func choose(folder: Bool, prompt: String) -> URL? {
+    func choose(folder: Bool, prompt: String, message: String = "") -> URL? {
         let p = NSOpenPanel()
-        p.canChooseDirectories = folder; p.canChooseFiles = !folder; p.canCreateDirectories = folder; p.allowsMultipleSelection = false; p.prompt = prompt
+        p.canChooseDirectories = folder; p.canChooseFiles = !folder; p.canCreateDirectories = folder; p.allowsMultipleSelection = false; p.prompt = prompt; p.message = message
         if !folder { p.showsHiddenFiles = true }
         return p.runModal() == .OK ? p.url : nil
     }

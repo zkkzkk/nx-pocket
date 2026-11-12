@@ -28,8 +28,8 @@ NX Pocket is one iPhone app for all your Switch games, built on [nxnative](https
 ## Getting started
 
 1. **NX Pocket for Mac.** Download the Mac app (zip) from Releases and move the app to Applications. It is not notarized: the first time, open it, then allow it in System Settings → Privacy & Security → Open Anyway. Or build it yourself: `dm/mac/pocket/build.sh <output folder>`.
-2. **Get the code.** Packs are made by this repository's scripts, so NX Pocket for Mac needs a copy of it: `git clone https://github.com/zkkzkk/nx-pocket.git` (on a drive with room for your games' build files). Setup asks for this folder.
-3. **Setup.** The first start checks Xcode and installs what a build needs (Homebrew tools, Python modules). Point it at your `prod.keys`; only the path is kept, the keys are never copied.
+2. **Install Xcode** 27.2 from the App Store, and open it once.
+3. **Setup.** The first start lists what making packs needs. **Install All** installs the rest: the Homebrew tools, .NET, the Python modules, and this repository's code, which it downloads into a folder you pick (about 600 MB; packs are made by its scripts). Steps that need your Mac's password (Homebrew, Xcode's first launch) run in Terminal: type the password there, then come back. Then choose your `prod.keys`; only the path is kept, the keys are never copied. A copy of the code you already have works too: choose its folder.
 4. **Add a game.** Drag in the folder with the game's files. The app pairs the base game, its update and DLC, and tells you whether nxnative supports it (tested / in progress / no profile).
 5. **Make Game Pack.** The first build of a game takes 10 to 60 minutes (most of it compiling shaders); later builds reuse the build files. Packs go to the game pack folder set in Settings.
 6. **Install NX Pocket.** With the iPhone connected (Developer Mode on), click Install NX Pocket; the app builds it with your team and installs it. Or sideload the IPA from Releases with AltStore or a similar tool (Sideloadly drops the Increased Memory Limit entitlement).
