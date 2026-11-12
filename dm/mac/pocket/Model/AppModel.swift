@@ -471,14 +471,16 @@ import Combine
 
     // MARK: setup
 
+    private var setupCheck = 0   // the latest check: an older one that ends after it (one started while an install ran) does not overwrite its list
     func checkSetup() {
+        setupCheck += 1; let mine = setupCheck
         if keys.isEmpty, FileManager.default.isReadableFile(atPath: Setup.commonKeys) { keys = Setup.commonKeys }   // where the other front ends keep them
         let (r, k, p0) = (repo, keys, python)
         Task.detached {
             // the tool kit's Python, once the one chosen before cannot run the build (none, Homebrew's without the modules, an Intel one)
             let p = !Setup.pythonReady(p0) && ToolKit.python != p0 && Setup.pythonReady(ToolKit.python) ? ToolKit.python : p0
             let items = Setup.check(repo: r, keys: k, python: p)
-            await MainActor.run { if p != self.python { self.python = p }; self.setup = items }
+            await MainActor.run { guard mine == self.setupCheck else { return }; if p != self.python { self.python = p }; self.setup = items }
         }
     }
     var setupMissing: Bool { setup.contains { $0.state == .missing } }
