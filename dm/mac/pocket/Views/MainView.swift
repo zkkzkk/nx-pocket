@@ -201,7 +201,7 @@ struct InstallSheet: View {
                 if let logo = PlatformImage(named: "PocketLogo") { Image(platformImage: logo).resizable().frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous)) }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tr("Install NX Pocket")).font(.system(size: 17, weight: .bold))
-                    Text(tr("Built from the last commit of your nxnative checkout and installed over the cable. Games and saves on the iPhone stay.")).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(tr("Built from NX Pocket's code on this Mac and installed over the cable. Games and saves on the iPhone stay.")).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             if model.pocketTeam.isEmpty {

@@ -88,8 +88,7 @@ struct SetupView: View {
 
     private func label(_ a: SetupAction, ok: Bool) -> String {
         switch a {
-        case .command, .terminal: return tr("Install")
-        case .downloadRepo: return tr("Download")
+        case .command, .terminal, .installTools: return tr("Install")
         case .open: return tr("Open")
         case .chooseRepo, .chooseKeys, .choosePython, .chooseEnv: return ok ? tr("Change…") : tr("Choose…")
         }

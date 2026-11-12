@@ -94,7 +94,7 @@ import Combine
         fullVerify = d.bool(forKey: "fullVerify")
         packsFolder = d.string(forKey: "packsFolder") ?? ""
         targetID = d.string(forKey: "targetDevice")
-        if repo.isEmpty, let found = Self.findRepo() { repo = found }
+        if repo.isEmpty, let found = Self.findRepo() ?? (Setup.isCode(Setup.codeFolder) ? Setup.codeFolder : nil) { repo = found }
         if python.isEmpty { python = Setup.guessPython(repo: repo) }
         games = (d.stringArray(forKey: "games") ?? []).map { MacGame(folder: URL(fileURLWithPath: $0), name: URL(fileURLWithPath: $0).lastPathComponent) }   // their names until scanned
         selection = games.first?.id
@@ -472,10 +472,11 @@ import Combine
     // MARK: setup
 
     func checkSetup() {
+        if keys.isEmpty, FileManager.default.isReadableFile(atPath: Setup.commonKeys) { keys = Setup.commonKeys }   // where the other front ends keep them
         let (r, k, p0) = (repo, keys, python)
         Task.detached {
-            let v = Setup.venvPython(repo: r)   // the environment Install made, once the Python chosen before lacks the modules (Homebrew's, which refuses them)
-            let p = !Setup.pythonReady(p0) && v != p0 && Setup.pythonReady(v) ? v : p0
+            // the tool kit's Python, once the one chosen before cannot run the build (none, Homebrew's without the modules, an Intel one)
+            let p = !Setup.pythonReady(p0) && ToolKit.python != p0 && Setup.pythonReady(ToolKit.python) ? ToolKit.python : p0
             let items = Setup.check(repo: r, keys: k, python: p)
             await MainActor.run { if p != self.python { self.python = p }; self.setup = items }
         }
@@ -484,30 +485,18 @@ import Combine
     /// Whether Install All has something to do: a missing item a command or a download fixes (Xcode from the App Store and the keys stay the player's)
     var setupInstallable: Bool {
         setup.contains { item in
-            guard item.state == .missing || (item.id == "python" && item.state != .ok) else { return false }
-            switch item.install { case .command?, .terminal?, .downloadRepo?: return true; default: return item.id == "python" }
+            guard item.state == .missing else { return false }
+            switch item.install { case .command?, .terminal?, .installTools?: return true; default: return false }
         }
     }
 
-    /// Everything a command can install, in one go: the code first downloaded into a folder the player picks (when it is missing), then one script, run here,
-    /// or in Terminal when a step asks for the password (Homebrew's installer, Xcode's first launch)
+    /// Everything a command can install, in one go: one script, run here, or in Terminal when a step asks for the password (Xcode's first launch). The code
+    /// goes into Setup.codeFolder, unless a copy of NX Pocket's code is already chosen (Settings, Advanced)
     func installAll() {
-        var dest = repo, clone = false
-        if setup.first(where: { $0.id == "repo" })?.state != .ok {
-            guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
-            dest = Self.codeFolder(in: u); clone = !Setup.isCode(dest)
-        }
-        let (items, py) = (setup, python)
-        repo = dest
-        Task.detached {
-            let (script, terminal) = Setup.installAll(items, repo: dest, cloneRepo: clone, python: py)
-            await MainActor.run { terminal ? self.runInTerminal(script) : self.runSetup(script) }
-        }
-    }
-
-    /// Where Download puts the code in the folder picked: the folder itself when it is already a copy, else nx-pocket in it
-    static func codeFolder(in u: URL) -> String {
-        Setup.isCode(u.path) ? u.path : u.appendingPathComponent("nx-pocket").path
+        let dest = Setup.isCode(repo) ? repo : Setup.codeFolder
+        let (script, terminal) = Setup.installAll(setup, codeFolder: dest)
+        if !Setup.isCode(repo) { repo = dest }
+        terminal ? runInTerminal(script) : runSetup(script)
     }
 
     private func runSetup(_ script: String) {
@@ -515,7 +504,6 @@ import Combine
         setupRun = r
         r.onFinish = { [weak self] _ in
             guard let self else { return }
-            if self.python.isEmpty || !FileManager.default.isExecutableFile(atPath: self.python) { self.python = Setup.guessPython(repo: self.repo) }
             self.checkSetup()
         }
         r.start("/bin/bash", ["-lc", script])
@@ -523,7 +511,7 @@ import Combine
 
     /// The script as a .command file, which Terminal opens and runs: there it can ask for the Mac's password
     private func runInTerminal(_ script: String) {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NX Pocket")
+        let dir = ToolKit.home
         let file = dir.appendingPathComponent("Setup.command")
         let text = "#!/bin/bash\ncd \"$HOME\"\n\(script)\necho; echo '\(tr("Done. Go back to NX Pocket."))'\n"
         do {
@@ -540,11 +528,10 @@ import Combine
         case .open(let u): if let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case .command(let c): runSetup(Setup.script([c]))
         case .terminal(let c): runInTerminal(Setup.script([c]))
-        case .downloadRepo:
-            guard let u = choose(folder: true, prompt: tr("Download Here"), message: tr("Where the code goes (about 600 MB). It is put in a folder named nx-pocket here.")) else { return }
-            let dest = Self.codeFolder(in: u)
-            repo = dest
-            if Setup.isCode(dest) { checkSetup() } else { runSetup(Setup.script([Setup.cloneCommand(into: dest)])) }
+        case .installTools(let kit, let code):
+            let dest = Setup.isCode(repo) ? repo : Setup.codeFolder
+            if code { repo = dest }
+            runSetup(Setup.script(Setup.toolSteps(kit: kit, code: code, codeFolder: dest)))
         case .chooseRepo:
             if let u = choose(folder: true, prompt: tr("Choose")) { repo = u.path; if python.isEmpty { python = Setup.guessPython(repo: repo) }; checkSetup() }
         case .chooseKeys:

@@ -22,7 +22,11 @@ struct UpstreamReport: Equatable {
     var branch: String { UserDefaults.standard.string(forKey: "upstreamBranch").flatMap { $0.isEmpty ? nil : $0 } ?? "main" }
     var report: UpstreamReport? { if case .done(let r) = state { r } else { nil } }
 
+    /// Only for a developer who named an upstream (Settings, Advanced): a player's code comes from NX Pocket's releases, not from nxnative
+    static var enabled: Bool { !(UserDefaults.standard.string(forKey: "upstreamURL") ?? "").isEmpty }
+
     func start(repo: String) {
+        guard Self.enabled else { return }
         let last = UserDefaults.standard.double(forKey: "upstreamChecked")
         if !repo.isEmpty, Date().timeIntervalSince1970 - last > 86_400 { Task { await check(repo: repo) } }
     }

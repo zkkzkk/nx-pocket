@@ -178,7 +178,7 @@ private struct PackCard: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(tr("No game pack yet")).font(.system(size: 15, weight: .semibold))
                 Text(model.canBuild(game) ? tr("Making one takes 20 to 60 minutes, depending on the game. You can stop and carry on later: finished stages are kept.")
-                                    : tr("Finish setting up first: the nxnative checkout, a Python and your prod.keys."))
+                                    : tr("Finish setting up first (Setup in the sidebar): Xcode, the tools and your prod.keys."))
                     .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if model.support(game).level == .none {
                     Label(tr("nxnative has no profile for this game: a pack can be made, but it will most likely not run."), systemImage: "exclamationmark.triangle.fill")

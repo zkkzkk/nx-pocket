@@ -17,7 +17,7 @@ struct NXPocketMacApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button(tr("About NX Pocket")) { showAbout() }
                 Button(tr("Check for Updates…")) { Task { await model.updater.check(manual: true) } }
-                Button(tr("Upstream nxnative…")) { model.upstream.showWindow = true }
+                if Upstream.enabled { Button(tr("Upstream nxnative…")) { model.upstream.showWindow = true } }
             }
             CommandGroup(after: .newItem) {
                 Button(tr("Add Game…")) { model.addWithPanel() }.keyboardShortcut("o")

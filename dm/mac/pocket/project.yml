@@ -32,6 +32,10 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: ${DM_MAC_BUILD}       # the checkout's commit count (build.sh), as NX Pocket's (About)
         NXPocketCommit: ${DM_MAC_COMMIT}
+        NXPocketToolsVersion: ${DM_MAC_TOOLS_VERSION}   # the tool kit (tools/tools.lock, build.sh): Setup downloads it into Application Support
+        NXPocketToolsURL: ${DM_MAC_TOOLS_URL}
+        NXPocketToolsSHA256: ${DM_MAC_TOOLS_SHA256}
+        NXPocketToolsSize: ${DM_MAC_TOOLS_SIZE}
         NXPocketUpdateKey: ${DM_MAC_UPDATE_KEY}   # release.py keygen's public key (update-key.pub); none: no updates are installed
         LSApplicationCategoryType: public.app-category.games
         CFBundleLocalizations: [en, zh-Hans]   # the system's menus (File, Edit, Window) in Chinese too; the app's own words come from tr()

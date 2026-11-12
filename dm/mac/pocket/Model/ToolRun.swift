@@ -28,7 +28,7 @@ enum ToolEnvironment {
         var env = ProcessInfo.processInfo.environment.merging(scripted()) { $1 }
         for k in env.keys where k.hasPrefix("DYLD_") || k.hasPrefix("__XCODE") { env[k] = nil }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let path = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "\(home)/.dotnet", "/usr/local/share/dotnet", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let path = [ToolKit.bin, "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "\(home)/.dotnet", "/usr/local/share/dotnet", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]   // the tool kit's first
         env["PATH"] = (path + (env["PATH"] ?? "").split(separator: ":").map(String.init)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: ":")
         env["PYTHONUNBUFFERED"] = "1"
         if env["TMPDIR"] == nil { env["TMPDIR"] = NSTemporaryDirectory() }   // .NET's NuGet needs one
