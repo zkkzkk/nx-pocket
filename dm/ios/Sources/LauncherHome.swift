@@ -702,9 +702,6 @@ private struct CertificateSection: View {
     let changed: () -> Void
     @State private var info = PocketCertificate.current?()
     @State private var picking = false
-    @State private var picked: Data?
-    @State private var asking = false
-    @State private var password = ""
     @State private var message = ""
 
     var body: some View {
@@ -736,25 +733,11 @@ private struct CertificateSection: View {
         } footer: {
             Text(message.isEmpty ? tr("Used to sign game packs on this device. It must be the certificate NX Pocket is signed with, exported as a .p12 with its private key, and is stored in this device's Keychain.") : message)
         }
-        .sheet(isPresented: $picking) {
-            DocumentPicker(types: [.pkcs12]) { url in
-                picking = false
-                let ok = url.startAccessingSecurityScopedResource(); defer { if ok { url.stopAccessingSecurityScopedResource() } }
-                picked = try? Data(contentsOf: url)
-                if picked == nil { message = tr("The file could not be read.") } else { password = ""; asking = true }
-            } onCancel: { picking = false }
-        }
-        .alert(tr("Certificate password"), isPresented: $asking) {
-            SecureField(tr("Password"), text: $password)
-            Button(tr("Cancel"), role: .cancel) { picked = nil }
-            Button(tr("Import")) {
-                guard let data = picked, let imp = PocketCertificate.importP12 else { return }
-                do { info = try imp(data, password); message = tr("Certificate imported. Game packs are signed on this device when they start."); changed() }
-                catch { message = error.localizedDescription }
-                picked = nil; password = ""
+        .certificateImport(isPresented: $picking) { result in
+            switch result {
+            case .success(let i): info = i; message = tr("Certificate imported. Game packs are signed on this device when they start."); changed()
+            case .failure(let e): message = e.localizedDescription
             }
-        } message: {
-            Text(tr("Enter the password set when the .p12 was exported. Leave it empty if none was set."))
         }
     }
 
@@ -762,6 +745,52 @@ private struct CertificateSection: View {
         let days = Int(ceil(d.timeIntervalSinceNow / 86400))
         if days <= 0 { return tr("Expired") }
         return String(format: tr("in %d days (%@)"), days, d.formatted(date: .abbreviated, time: .omitted))
+    }
+}
+
+/// The certificate import: a .p12 picked in Files, then its password, then PocketCertificate.importP12 (Settings' Signing section, and the import dialog when a pack
+/// needs signing here). The password is asked once the picker is gone and has handed over the file, whichever comes last (the picker closes itself before it hands
+/// it over): an alert presented while the sheet is still closing is dropped, and Import seemed to do nothing
+private struct CertificateImport: ViewModifier {
+    @Binding var isPresented: Bool
+    let done: (Result<PocketCertificate.Info, Error>) -> Void
+    @State private var picked: Data?
+    @State private var gone = false   // the picker's sheet has closed
+    @State private var asking = false
+    @State private var password = ""
+
+    private func ask() { if gone, picked != nil { password = ""; asking = true } }
+
+    struct Unreadable: LocalizedError { var errorDescription: String? { tr("The file could not be read.") } }
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $isPresented, onDismiss: { gone = true; ask() }) {
+                DocumentPicker(types: [.pkcs12]) { url in
+                    let ok = url.startAccessingSecurityScopedResource(); defer { if ok { url.stopAccessingSecurityScopedResource() } }
+                    picked = try? Data(contentsOf: url)
+                    if picked == nil { done(.failure(Unreadable())) }
+                    isPresented = false; ask()
+                } onCancel: { isPresented = false }
+            }
+            .onChange(of: isPresented) { _, open in if open { gone = false; picked = nil } }
+            .alert(tr("Certificate password"), isPresented: $asking) {
+                SecureField(tr("Password"), text: $password)
+                Button(tr("Cancel"), role: .cancel) { picked = nil }
+                Button(tr("Import")) {
+                    guard let data = picked, let imp = PocketCertificate.importP12 else { return }
+                    done(Result { try imp(data, password) })
+                    picked = nil; password = ""
+                }
+            } message: {
+                Text(tr("Enter the password set when the .p12 was exported. Leave it empty if none was set."))
+            }
+    }
+}
+
+extension View {
+    func certificateImport(isPresented: Binding<Bool>, done: @escaping (Result<PocketCertificate.Info, Error>) -> Void) -> some View {
+        modifier(CertificateImport(isPresented: isPresented, done: done))
     }
 }
 
@@ -780,6 +809,7 @@ struct ImportDialog: View {
     @State private var cloud = false     // the chosen pack is in iCloud Drive and not all on this device yet
     @State private var quickOnly = false // a single-file pack without every chunk's checksum: only the quick check can be made
     @State private var notice: String?   // after an import: what the player should know (the quick check only)
+    @State private var certificate = false   // importing the developer certificate a pack of another team (or none) needs, from here
 
     var body: some View {
         ZStack {
@@ -848,6 +878,9 @@ struct ImportDialog: View {
                         if let picked, checks?.passed == true {
                             secondary(tr("Copy to NX Pocket")) { run(picked, mode: .copy) }
                             primary(tr("Use in Place")) { run(picked, mode: .link) }
+                        } else if needsCertificate {   // only the signature failed: the certificate is the way on, so it is the button, not Select Another
+                            secondary(tr("Select Another")) { picking = true }
+                            primary(tr("Import Certificate…")) { certificate = true }
                         } else {
                             secondary(tr("Cancel"), action: close)
                             primary(tr(picked == nil ? "Select Pack" : "Select Another")) { picking = true }
@@ -869,8 +902,20 @@ struct ImportDialog: View {
         .sheet(isPresented: $picking) {
             DocumentPicker(types: [.nxpack, .folder]) { url in picking = false; inspect(url) } onCancel: { picking = false }
         }
+        .certificateImport(isPresented: $certificate) { result in
+            switch result {
+            case .success: if let picked { inspect(picked) }   // checked again: NX Pocket now signs it at Play
+            case .failure(let e): failure = e.localizedDescription
+            }
+        }
         .onAppear { if let u = library.opening { library.opening = nil; inspect(u) } }   // a pack opened from the Files app or AirDrop (PocketApp.swift)
         .onChange(of: library.opening) { _, u in if let u, busy == nil { library.opening = nil; inspect(u) } }
+    }
+
+    /// The pack is fine but for its signature, and NX Pocket could sign it here with a certificate it does not hold yet
+    private var needsCertificate: Bool {
+        guard let c = checks else { return false }
+        return c.files == nil && c.shaders == nil && c.signature != nil && PocketCertificate.importP12 != nil
     }
 
     private var subtitle: String {
