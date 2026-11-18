@@ -32,6 +32,7 @@ struct LauncherHome: View {
     @ObservedObject var library: GameLibrary
     let play: () -> Void
     var close: (() -> Void)? = nil   // NX Pocket: close the game paused under the home screen
+    var roomCircuit: (() -> Void)? = nil
     var m: LauncherModel { library.model }   // the selected game's settings
     @State private var fold = FoldState()
     @State private var page: LauncherPage?
@@ -142,7 +143,7 @@ struct LauncherHome: View {
             }
         case .localPlay:
             SettingsPage(title: tr("Local play"), size: size, safe: safe, portrait: portrait, back: back, side: { PageBadge(symbol: "person.2", title: tr("Local play"), note: tr("Runs the game's local wireless mode with devices on the same Wi-Fi network.")) }) {
-                SettingsList(m: m, sections: m.sections.filter { $0 == "Local play" }, note: localPlayOn == nil ? tr("This game does not support local play.") : "")
+                SettingsList(m: m, sections: m.sections.filter { $0 == "Local play" }, note: localPlayOn == nil ? tr("This game does not support local play.") : "", roomCircuit: roomCircuit)
             }
         case .controls:
             SettingsPage(title: tr("Button layout"), size: size, safe: safe, portrait: portrait, back: back, side: { PageBadge(symbol: "gamecontroller", title: tr("Button layout"), note: tr("To move, resize or hide touch controls, start the game and tap Edit to the right of +. In games started from NX Pocket, Home to the left of − pauses the game and returns here.")) }) {
@@ -150,7 +151,7 @@ struct LauncherHome: View {
             }
         case .settings:
             SettingsPage(title: tr("Settings"), size: size, safe: safe, portrait: portrait, back: back, side: { PageBadge(symbol: "gearshape", title: tr("Settings"), note: tr("Per-game options are in Game settings.")) }) {
-                SettingsList(m: m, sections: [], note: "", app: true, certificate: PocketCertificate.importP12 == nil ? nil : { library.reload() }, about: library.canImport)
+                SettingsList(m: m, sections: [], note: "", app: true, certificate: PocketCertificate.importP12 == nil ? nil : { library.reload() }, about: library.canImport, roomCircuit: roomCircuit)
             }
         }
     }
@@ -617,11 +618,12 @@ struct SettingsList: View {
     var linked = false                // used in place: removing forgets the link, the pack stays
     var certificate: (() -> Void)? = nil   // NX Pocket's Settings: its developer certificate (called after a change: the packs' checks change with it)
     var about = false                       // NX Pocket's Settings: About NX Pocket, last
+    var roomCircuit: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !note.isEmpty { Text(note).font(.system(size: 13)).foregroundStyle(Palette.soft) }
-            if !sections.isEmpty || app || remove != nil {
+            if !sections.isEmpty || app || remove != nil || roomCircuit != nil {
                 List {
                     ForEach(sections, id: \.self) { section in
                         let rows = m.rows(in: section)
@@ -649,6 +651,12 @@ struct SettingsList: View {
                             Button(tr("Delete Game Pack"), role: .destructive, action: remove).foregroundStyle(Palette.danger).listRowBackground(Palette.panel)
                         } footer: {
                             Text(tr(linked ? "Removes the link only; the pack stays in its location. Saves and settings are kept." : "Deletes the copy stored in NX Pocket. Saves and settings are kept."))
+                        }
+                    }
+                    if let roomCircuit {
+                        Section {
+                            Button(action: roomCircuit) { Label("RoomCircuit", systemImage: "calendar") }
+                                .listRowBackground(Palette.panel)
                         }
                     }
                     if let certificate { CertificateSection(changed: certificate) }

@@ -32,7 +32,7 @@ final class PocketSceneDelegate: UIResponder, UIWindowSceneDelegate {
         PackSigner.adoptDroppedCertificate()
         library.reload()
         let w = UIWindow(windowScene: ws)
-        w.rootViewController = LauncherHost(rootView: LauncherHome(library: library, play: { [weak self] in self?.play() }, close: { [weak self] in self?.confirmClose(next: nil) }))
+        w.rootViewController = LauncherHost(rootView: PocketRoomCircuitHome(library: library, play: { [weak self] in self?.play() }, close: { [weak self] in self?.confirmClose(next: nil) }))
         w.makeKeyAndVisible()
         window = w
         if ProcessInfo.processInfo.environment["DM_POCKET_SYSLOG"] == "1" { SysLogMirror.start() }
@@ -295,3 +295,19 @@ enum SysLogMirror {
     }
 }
 
+
+// Pass the optional action into the shared launcher. The standalone game
+// targets can keep using LauncherHome without compiling RoomCircuit.
+private struct PocketRoomCircuitHome: View {
+    @ObservedObject var library: GameLibrary
+    let play: () -> Void
+    let close: () -> Void
+    @State private var showRoomCircuit = false
+
+    var body: some View {
+        LauncherHome(library: library, play: play, close: close, roomCircuit: { showRoomCircuit = true })
+            .sheet(isPresented: $showRoomCircuit) {
+                RoomCircuitPanel(host: .nxPocket, chinese: launcherChinese)
+            }
+    }
+}

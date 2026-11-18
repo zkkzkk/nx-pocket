@@ -12,6 +12,8 @@ targets:
     platform: macOS
     sources:
       - path: App.swift
+      - path: ../../ios/pocket/RoomCircuitService.swift
+      - path: ../../ios/pocket/RoomCircuitPanel.swift
       - path: Model
       - path: Views
       - path: ../../ios/Sources/PocketStyle.swift
@@ -41,6 +43,9 @@ targets:
         LSApplicationCategoryType: public.app-category.games
         CFBundleLocalizations: [en, zh-Hans]   # the system's menus (File, Edit, Window) in Chinese too; the app's own words come from tr()
         LSMinimumSystemVersion: "26.0"
+        NSLocalNetworkUsageDescription: "NX Pocket connects to your RoomCircuit appointment server."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSHumanReadableCopyright: "NX Pocket contributors · based on nxnative"
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_MAC_BUNDLE_ID}

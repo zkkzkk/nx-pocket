@@ -12,6 +12,8 @@ targets:
     platform: iOS
     sources:
       - path: PocketApp.swift
+      - path: RoomCircuitService.swift
+      - path: RoomCircuitPanel.swift
       - path: PackSigner.swift
       - path: ../Sources/PackSign.c
       - path: AppIcon.icon          # NX Pocket's icon (Icon Composer layers: background, upper screen, lower screen; a dark background for the dark appearance)
@@ -61,6 +63,8 @@ targets:
         UIViewControllerBasedStatusBarAppearance: false
         LSApplicationCategoryType: public.app-category.games
         LSSupportsGameMode: true
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: "Local play: find and join other devices on the same Wi-Fi."   # in Chinese: Localized/zh-Hans.lproj/InfoPlist.strings
         CFBundleDevelopmentRegion: en
         CFBundleLocalizations: [en, zh-Hans]  # the system's own words (permission prompts) in the language chosen (AppleLanguages, LauncherRow.swift AppLanguage)

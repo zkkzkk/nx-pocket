@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct NXPocketMacApp: App {
     @StateObject private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(AppLanguage.key) private var language = ""   // the menus' own items (Add Game, Check for Updates…) in it
 
     var body: some Scene {
@@ -23,6 +24,7 @@ struct NXPocketMacApp: App {
                 Button(tr("Add Game…")) { model.addWithPanel() }.keyboardShortcut("o")
             }
             CommandGroup(after: .toolbar) {
+                Button("RoomCircuit…") { openWindow(id: "roomcircuit") }
                 Button(model.showLog ? tr("Hide Log") : tr("Show Log")) { model.showLog.toggle() }.keyboardShortcut("y", modifiers: [.command, .shift])
             }
         }
@@ -32,6 +34,10 @@ struct NXPocketMacApp: App {
             .defaultSize(width: 720, height: 560)
         Window(tr("Storage"), id: "storage") { StorageView().environmentObject(model).frame(minWidth: 640, minHeight: 360) }
             .defaultSize(width: 760, height: 460)
+        Window("RoomCircuit", id: "roomcircuit") {
+            RoomCircuitPanel(host: .nxPocket, chinese: launcherChinese, showsClose: false)
+        }
+        .defaultSize(width: 620, height: 640)
         Settings { SettingsView().environmentObject(model) }
     }
 }
